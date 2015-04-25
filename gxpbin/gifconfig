@@ -1,0 +1,82 @@
+#!/usr/bin/env python
+# Copyright (c) 2009 by Kenjiro Taura. All rights reserved.
+# Copyright (c) 2008 by Kenjiro Taura. All rights reserved.
+# Copyright (c) 2007 by Kenjiro Taura. All rights reserved.
+# Copyright (c) 2006 by Kenjiro Taura. All rights reserved.
+# Copyright (c) 2005 by Kenjiro Taura. All rights reserved.
+#
+# THIS MATERIAL IS PROVIDED AS IS, WITH ABSOLUTELY NO WARRANTY 
+# EXPRESSED OR IMPLIED.  ANY USE IS AT YOUR OWN RISK.
+# 
+# Permission is hereby granted to use or copy this program
+# for any purpose,  provided the above notices are retained on all 
+# copies. Permission to modify the code and to distribute modified
+# code is granted, provided the above notices are retained, and
+# a notice that the code was modified is included with the above
+# copyright notice.
+#
+# $Header: /cvsroot/gxp/gxp3/gxpbin/gifconfig,v 1.4 2011/08/01 18:14:54 ttaauu Exp $
+# $Name:  $
+#
+
+import socket,string,sys
+
+import ifconfig2
+
+def Ws(s):
+    sys.stdout.write(s)
+
+def Es(s):
+    sys.stderr.write(s)
+
+def compile_format(s):
+    x = s
+    x = string.replace(x, "%h", "%(host)s")
+    x = string.replace(x, "%a", "%(all)s")
+    i = 0
+    while 1:
+        src = "%%%d" % i        # %0
+        dest = "%%(i%d)s" % i   # %(i0)s
+        y = string.replace(x, src, dest)
+        # Ws("replace(%s, %s, %s) -> %s\n" % (x, src, dest, y))
+        if x == y: break
+        x = y
+        i = i + 1
+    return x
+
+def main():
+    host = socket.gethostname()
+    prio_str = ""
+    format = None
+    if len(sys.argv) > 1:
+        prio_str = sys.argv[1]
+    if len(sys.argv) > 2:
+        format = compile_format(sys.argv[2])
+    prio,msg = ifconfig2.compile_prio(prio_str)
+    if prio is None:
+        Es("%s: %s\n" % (host, msg))
+        return 1
+    addrs = ifconfig2.get_my_addrs(prio)
+    if format is None:
+        Ws("%s: %s\n" % (host, string.join(addrs, " ")))
+    else:
+        D = { "all" : string.join(addrs, " "),
+              "host" : host }
+        for i in range(len(addrs)):
+            D["i%d" % i] = addrs[i]
+        # Ws("format = %s\n" % format)
+        Ws("%s\n" % (format % D))
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+# $Log: gifconfig,v $
+# Revision 1.4  2011/08/01 18:14:54  ttaauu
+# *** empty log message ***
+#
+# Revision 1.3  2010/03/05 05:27:09  ttaauu
+# stop extending PYTHONPATH. see 2010-3-5 ChangeLog
+#
+# Revision 1.2  2009/06/06 14:06:26  ttaauu
+# added headers and logs
+#

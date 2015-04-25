@@ -1,0 +1,16 @@
+#!/usr/bin/expect
+#
+# usage:
+#   export SSH_PW=...
+#   ./ssh_passwd root@host command
+#
+set timeout 2
+set host [lindex $argv 0]
+set cmd [lindex $argv 1]
+# set cmd reboot
+set pw $env(SSH_PW)
+spawn ssh -o "stricthostkeychecking no" $host $cmd
+expect "Password:"
+send "$pw\r"
+interact
+# expect EOF

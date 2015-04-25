@@ -1,0 +1,362 @@
+#!/usr/bin/env python
+# Copyright (c) 2009 by Kenjiro Taura. All rights reserved.
+# Copyright (c) 2008 by Kenjiro Taura. All rights reserved.
+# Copyright (c) 2007 by Kenjiro Taura. All rights reserved.
+# Copyright (c) 2006 by Kenjiro Taura. All rights reserved.
+# Copyright (c) 2005 by Kenjiro Taura. All rights reserved.
+#
+# THIS MATERIAL IS PROVIDED AS IS, WITH ABSOLUTELY NO WARRANTY 
+# EXPRESSED OR IMPLIED.  ANY USE IS AT YOUR OWN RISK.
+# 
+# Permission is hereby granted to use or copy this program
+# for any purpose,  provided the above notices are retained on all 
+# copies. Permission to modify the code and to distribute modified
+# code is granted, provided the above notices are retained, and
+# a notice that the code was modified is included with the above
+# copyright notice.
+#
+# $Header: /cvsroot/gxp/gxp3/gxpbin/bomb,v 1.2 2009/06/06 14:06:26 ttaauu Exp $
+# $Name:  $
+#
+
+import re,os,string,sys,signal
+
+def Es(s):
+    sys.stderr.write(s)
+    sys.stderr.flush()
+    
+def Ws(s):
+    sys.stdout.write(s)
+    sys.stdout.flush()
+    
+# format of cat /proc/proc_num/stat:
+#
+# pid comm state ppid pgrp session tty_nr tpgid flags
+# minflt cminflt majflt cmajflt utime stime cutime cstime
+# priority nice zero itrealvalue starttime vsize rss
+# rlim startcode endcode startstack kstkesp kstkeip signal
+# blocked sigignore sigcatch wchan nswap cnswap
+# exit_signal processor
+#
+
+# format of cat /proc/proc_num/status
+#
+#
+# Name:	bash
+# State:	S (sleeping)
+# Tgid:	26887
+# Pid:	26887
+# PPid:	26886
+# TracerPid:	0
+# Uid:	0	0	0	0
+# Gid:	0	0	0	0
+# FDSize:	256
+# Groups:	0 1 2 3 4 6 10 
+# VmSize:	    2252 kB
+# VmLck:	       0 kB
+# VmRSS:	    1288 kB
+# VmData:	     276 kB
+# VmStk:	      24 kB
+# VmExe:	     508 kB
+# VmLib:	    1376 kB
+# SigPnd:	0000000000000000
+# SigBlk:	0000000000010000
+# SigIgn:	8000000000384004
+# SigCgt:	000000004b813efb
+# CapInh:	0000000000000000
+# CapPrm:	00000000fffffeff
+# CapEff:	00000000fffffeff
+
+
+class pinfo:
+    def __init__(self, pid, cmdline, status):
+        self.dbg = 1
+        self.pid = pid
+        self.cmdline = cmdline
+        self.status = status
+        self.uid = None
+        self.ppi = None
+        self.children = []
+
+    def analyze_status(self):
+        lines = string.split(self.status, "\n")
+        i = {}
+        for line in lines:
+            # Pid:	26887
+            # PPid:	26886
+            # Uid:	0	0	0	0
+            fields = string.split(line, None, 1)
+            if len(fields) != 2: continue
+            [ key, val ] = map(string.strip, fields)
+            i[key] = val
+        self.status_info = i
+        # check if mandatory fields are there
+        for mk in [ "Pid:", "PPid:", "Uid:" ]:
+            if not i.has_key(mk):
+                if self.dbg:
+                    Es("%s: no %s:\n" % (self.hostname, mk))
+                    Es("%s: %s\n" % (self.hostname, line))
+                return 0
+        if i["Pid:"] != self.pid:
+            if self.dbg:
+                Es("%s: pid mismatch\n" % (self.hostname, mk))
+                Es("%s: %s\n" % (self.hostname, line))
+            return 0
+        self.ppid = i["PPid:"]
+        self.uid = i["Uid:"]
+        return 1
+
+class bomber:
+    def safe_read(self, filename):
+        try:
+            fp = open(filename, "rb")
+            content = fp.read()
+            fp.close()
+            return content
+        except IOError,e:
+            return None
+        
+    def read_proc(self, pat, directory, pid):
+        if pat.match(pid) is None: return None
+        cmdline = self.safe_read("%s/%s/cmdline" % (directory, pid))
+        if cmdline is None:
+            if self.dbg:
+                Es("%s : no command line %s\n" % (self.hostname, pid))
+            return None
+        status = self.safe_read("%s/%s/status" % (directory, pid))
+        if status is None:
+            if self.dbg:
+                Es("%s : no status %s\n" % (self.hostname, pid))
+            return None
+        cmdline = string.split(cmdline, "\0")
+        pi = pinfo(pid, cmdline, status)
+        if pi.analyze_status() == 0:
+            if self.dbg:
+                Es("%s : analyze status failed for %s\n" \
+                   % (self.hostname, pid))
+            return None
+        return pi
+    
+    def enumerate(self):
+        pat = re.compile("\d+")
+        dirs = os.listdir("/proc")
+        procs = {}
+        for pid in dirs:
+            pi = self.read_proc(pat, "/proc", pid)
+            if pi is not None:
+                procs[pid] = pi
+                try:
+                    task_dirs = os.listdir("/proc/%s/task" % pid)
+                except OSError,e:
+                    task_dirs = []
+                for tid in task_dirs:
+                    ti = self.read_proc(pat, ("/proc/%s/task" % pid), tid)
+                    if ti is not None:
+                        procs[tid] = ti
+        self.set_children(procs)
+        return procs
+
+    def set_children(self, procs):
+        # set children field of all procs.
+        for pid,pi in procs.items():
+            if procs.has_key(pi.ppid):
+                # ppi is the parent of pi
+                # pi  is a child of ppi
+                ppi = procs[pi.ppid]
+                pi.ppi = ppi
+                ppi.children.append(pi)
+            else:
+                if self.dbg:
+                    Es("%s : orphan process %s\n" \
+                       % (self.hostname, pi.pid))
+
+    def find_ancestor(self, root_pi):
+        """
+        walk process tree upward until uid becomes different
+        from that of pid
+        """
+        pi = root_pi
+        child_pi = None                 # pi's child
+        while pi.ppi is not None and pi.uid == root_pi.uid:
+            child_pi = pi
+            pi = pi.ppi
+        assert child_pi is not None
+        return child_pi
+
+    def mark_descendants(self, pi, marked):
+        """
+        mark pid and its descendants recursively
+        """
+        if marked.has_key(pi.pid): return
+        if self.dbg:
+            Ws("%s %s : mark %s\n" \
+               % (self.hostname, self.pi.pid, pi.pid))
+        marked[pi.pid] = pi
+        for ch in pi.children:
+            self.mark_descendants(ch, marked)
+            
+    def mark_family(self, start_pi, marked):
+        anc = self.find_ancestor(start_pi)
+        if self.dbg:
+            Ws("%s %s : ancestor of %s is %s\n" \
+               % (self.hostname, self.pi.pid, start_pi.pid, anc.pid))
+        self.mark_descendants(anc, marked)
+
+    def look_like_root_gxpd(self, pi, root_gupids):
+        # a crude heuristics for identifiying
+        # a real root gxpd.py (directly created by gxpc).
+        # it is invokved by
+        # gxpd.py --no_stdin --redirect_stdout --redirect_stderr
+        if self.pi.uid != pi.uid: return 0
+        for root_gupid in root_gupids:
+            if ("%s" % pi.pid) in root_gupid:
+                return 1
+        if "--no_stdin" not in pi.cmdline: return 0
+        if "--redirect_stdout" not in pi.cmdline: return 0
+        if "--redirect_stderr" not in pi.cmdline: return 0
+        if "--root_gupid" in pi.cmdline: return 0
+        # the final safety net. if pid is contained in one of such
+        # xxxx's, it may be a root.
+        return 1
+
+    def find_sibling_gxps(self, marked, procs):
+        # first find gxpd.py and its --root_gupid args
+        pat = re.compile("--root_gupid +(?P<root_gupid>[^ ]+)")
+        # in marked, get processes whose command line include 
+        # --root_gupid xxxx and make the list of all such xxxx's
+        root_gupids = []
+        for pi in marked.values():
+            if self.look_like_root_gxpd(pi, root_gupids):
+                if self.dbg:
+                    Ws("%s %s : found root gxpd %s\n" \
+                       % (self.hostname, self.pi.pid, pi.pid))
+                return 1,[]
+            else:
+                if "--root_gupid" in pi.cmdline:
+                    i = pi.cmdline.index("--root_gupid")
+                    if i + 1 < len(pi.cmdline):
+                        root_gupids.append(pi.cmdline[i + 1])
+        # get amont ALL processes whose --root_gupid is one of such xxxx's
+        # Ws("%s %s : root_gupids = %s\n" % (self.hostname, self.pi.pid, root_gupids))
+        preserved = []
+        for pi in procs.values():
+            if self.look_like_root_gxpd(pi, root_gupids):
+                if self.dbg:
+                    Ws("%s %s : found root gxpd %s\n" \
+                       % (self.hostname, self.pi.pid, pi.pid))
+                return 1,[]
+            else:
+                if "--root_gupid" in pi.cmdline:
+                    i = pi.cmdline.index("--root_gupid")
+                    if i + 1 < len(pi.cmdline) and (pi.cmdline[i + 1] in root_gupids):
+                        preserved.append(pi)
+        return 0,preserved
+
+    def procs_not_to_bomb_gxp(self, procs):
+        # mark my family = descendants of my ancestor
+        marked = {}
+        self.mark_family(self.pi, marked)
+        root_running,gxps = self.find_sibling_gxps(marked, procs)
+        if root_running == 0:
+            for pi in gxps:
+                if self.dbg:
+                    Ws("%s %s : my sibling %s\n" \
+                       % (self.hostname, self.pi.pid, pi.pid))
+                self.mark_family(pi, marked)
+        return root_running,marked
+
+    def procs_to_bomb(self, procs):
+        # get all processes
+        root_running,marked = self.procs_not_to_bomb_gxp(procs)
+        to_bomb = {}
+        if root_running == 0:
+            for pi in procs.values():
+                # bomb procs with my uid and not marked
+                if pi.uid == self.pi.uid and not marked.has_key(pi.pid):
+                    to_bomb[pi.pid] = pi
+        if self.dbg:
+            Ws("%s %s : found %d procs to bomb\n" \
+               % (self.hostname, self.pi.pid, len(to_bomb)))
+        return to_bomb
+
+    def readable_cmdline(self, cmdline):
+        # args = string.split(cmdline, "\0")
+        return string.join(cmdline, " ")
+
+    def safe_kill(self, pid, sig):
+        try:
+            os.kill(pid, sig)
+            return 1
+        except OSError,e:
+            return 0
+
+    def parse_opts(self, argv):
+        self.dbg = 0
+        self.verbose = 0
+        self.really = 1
+        self.help = 0
+        for a in argv[1:]:
+            if a == "--help":
+                self.help = 1
+            elif a == "--dbg":
+                self.dbg = 1
+            elif a == "--verbose":
+                self.verbose = 1
+            elif a == "-n" or a == "--practice":
+                self.really = 0
+            else:
+                Es("%s: unknown option %s (ignored)\n" \
+                   % (self.hostname, a))
+
+    def usage(self):
+        Es("usage:\n"\
+           "  bomb [-n] [--verbose]\n"\
+           "    -n        : only show, do not really kill.\n"\
+           "    --verbose : show all procs to kill\n")
+        
+    def gethostname(self):
+        try:
+            import socket
+            return socket.gethostname()
+        except:
+            pass
+        try:
+            return os.environ["HOSTNAME"]
+        except:
+            pass
+        return "unknown_host"
+        
+    def execute(self, argv):
+        self.hostname = self.gethostname()
+        self.parse_opts(argv)
+        if self.help:
+            self.usage()
+            return 0
+        
+        self_pid = "%s" % os.getpid()
+        procs = self.enumerate()
+        self.pi = procs[self_pid]
+        to_bomb = self.procs_to_bomb(procs)
+        bombed = 0
+        if len(to_bomb) > 0:
+            Ws("%s %s : kill %d procs\n" \
+               % (self.hostname, self_pid, len(to_bomb)))
+        for pid,pi in to_bomb.items():
+            if self.verbose:
+                Ws("%s %s : %s : %s\n" \
+                   % (self.hostname, self_pid, pid, self.readable_cmdline(pi.cmdline)))
+            if self.really:
+                bombed = bombed + self.safe_kill(int(pid), signal.SIGKILL)
+        return 0
+    
+def main():
+    bo = bomber()
+    return bo.execute(sys.argv)
+    
+if __name__ == "__main__":
+    sys.exit(main())
+
+# $Log: bomb,v $
+# Revision 1.2  2009/06/06 14:06:26  ttaauu
+# added headers and logs
+#

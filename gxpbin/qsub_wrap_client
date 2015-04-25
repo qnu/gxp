@@ -1,0 +1,415 @@
+#!/usr/bin/env python
+# Copyright (c) 2009 by Kenjiro Taura. All rights reserved.
+# Copyright (c) 2008 by Kenjiro Taura. All rights reserved.
+# Copyright (c) 2007 by Kenjiro Taura. All rights reserved.
+# Copyright (c) 2006 by Kenjiro Taura. All rights reserved.
+# Copyright (c) 2005 by Kenjiro Taura. All rights reserved.
+#
+# THIS MATERIAL IS PROVIDED AS IS, WITH ABSOLUTELY NO WARRANTY 
+# EXPRESSED OR IMPLIED.  ANY USE IS AT YOUR OWN RISK.
+# 
+# Permission is hereby granted to use or copy this program
+# for any purpose,  provided the above notices are retained on all 
+# copies. Permission to modify the code and to distribute modified
+# code is granted, provided the above notices are retained, and
+# a notice that the code was modified is included with the above
+# copyright notice.
+#
+# $Header: /cvsroot/gxp/gxp3/gxpbin/qsub_wrap_client,v 1.3 2012/04/03 13:00:30 ttaauu Exp $
+# $Name:  $
+#
+
+import base64,errno,os,re
+import select,socket,string,sys,types
+
+## import opt
+## ---------------- BEGIN copy-pasted from opt.py ----------------
+
+import copy,getopt,os,string,sys
+
+class cmd_opts:
+    """
+    simple command line parser.
+    usage:
+      1. inherit this class (class xxx_cmd_opts(cmd_opts): ...)
+      2. define __init__ function (see below for details).
+      3. o = xxx_cmd_opts()
+         if o.parse(args) == 0:
+            OK
+         else:
+            ERROR
+
+      4. if o.parse returns zero, then you have options in fields of o.
+
+    __init__ method should define fields that correspond to options.
+    e.g.,
+
+    def __init__(self):
+        self.xyz = ...
+        self.abc = ...
+
+    this says, this accepts options --xyz and --abc.
+
+    type and default values of each option can be specified by the value.
+    
+        self.xyz = ("i", 10)
+
+    says xyz should be an integer and its default value is 10. types
+    supported are:
+      
+        s or s* : string
+        i or i* : int
+        f or f* : float
+        None    : flag (no arg)
+
+        for s, i, f, and None, if the same option occurs multiple times
+        in the arg list, the last value overwrites all previous values.
+        so, --xyz 1 --xyz 2 will have the same effect as --xyz 2.
+
+        for s*, i*, f*, all values are put in a list.
+
+        if you want to have the single character option of the same
+        option (e.g., if -n is a synonym for --no_exec), you can say this
+        by
+
+        self.n = "no_exec"
+
+    a complete example of __init__:
+
+        self.abc = ("i", 0)
+        self.pqr = ("f", 1.0)
+        self.xyz = ("s", "hello")
+        self.abcd = ("i*", [])
+        self.pqrs = ("f*", [])
+        self.xyzw = ("s*", [])
+        self.hoge = (None, 0)
+        self.a = "abc"
+        self.p = "pqr"
+        self.x = "xyz"
+
+    if you need a postcheck for validity of arguments, define postcheck()
+    so that it return zero on success and -1 otherwise.
+    
+    
+    """
+    def __init__(self):
+        # (type, default)
+        # types supported
+        #   s : string
+        #   i : int
+        #   f : float
+        #   l : list of strings
+        #   None : flag
+        self.specified_fields = {}
+    
+    def parse(self, argv):
+        short,long = self.get_options()
+        try:
+            opts,args = getopt.getopt(argv, short, long)
+        except getopt.error,e:
+            self.Es("%s\n" % e.args[0])
+            return -1
+        for opt,arg in opts:
+            if self.setopt(opt, arg) == -1: return -1
+        if self.finalize_opts() == -1: return -1
+        self.args = args
+        return 0
+
+    def get_options(self):
+        """
+        return things passed getopt
+        """
+        long_opts = []
+        short_opts = []
+        for o in self.__dict__.keys():
+            if o == "specified_fields":
+                continue
+            elif len(o) == 1:
+                long_o = getattr(self, o) # p -> parent
+                typ,default = getattr(self, long_o)
+                if typ is None:         # no arg   (-h)
+                    short_opts.append(o)
+                else:                   # want arg (-f file)
+                    short_opts.append("%s:" % o)
+            else:
+                typ,default = getattr(self, o)
+                if typ is None:         # no arg   (--help)
+                    long_opts.append("%s" % o)
+                else:                   # want arg (--file file)
+                    long_opts.append("%s=" % o)
+        return string.join(short_opts),long_opts
+            
+    def Es(self, s):
+        os.write(2, s)
+
+    def safe_atoi(self, s, defa):
+        try:
+            return string.atoi(s)
+        except ValueError:
+            return defa
+
+    def safe_atof(self, s, defa):
+        try:
+            return string.atof(s)
+        except ValueError:
+            return defa
+
+    def setopt(self, o, a):
+        if len(o) == 2:                 # -h
+            field = getattr(self, o[1:])
+        else:                           # --help
+            field = o[2:]
+        typ,val = getattr(self, field)
+        # type check
+        if typ is None:
+            x = 1
+        elif typ[0] == "i":             # int option
+            x = self.safe_atoi(a, None)
+            if x is None:
+                self.Es("invalid argument for %s (%s)\n" % (o, a))
+                return -1
+        elif typ[0] == "f":             # float option
+            x = self.safe_atof(a, None)
+            if x is None:
+                self.Es("invalid argument for %s (%s)\n" % (o, a))
+                return -1
+        elif typ[0] == "s":
+            x = a
+        else:
+            bomb()
+
+        if typ is None or len(typ) == 1:
+            setattr(self, field, (typ,x))
+        else:
+            assert len(typ) == 2, typ
+            assert typ[1] == "*", typ
+            val.append(x)
+        self.specified_fields[field] = 1
+        return 0
+
+    def finalize_opts(self):
+        for o in self.__dict__.keys():
+            if o == "specified_fields":
+                continue
+            elif len(o) > 1:              # strip things like 'h'
+                typ,val = getattr(self, o)
+                setattr(self, o, val)
+        return self.postcheck()
+
+    def postcheck(self):
+        return 0                        # OK
+
+    def copy(self):
+        return copy.deepcopy(self)
+
+    def __str__(self):
+        A = []
+        for x,v in self.__dict__.items():
+            A.append(("%s : %s" % (x, v)))
+        return string.join(A, "\n")
+
+
+## ---------------- END copy-pasted from opt.py ----------------
+
+dbg = 2
+
+def Es(s):
+    sys.stderr.write(s)
+    sys.stderr.flush()
+
+def Ws(s):
+    sys.stdout.write(s)
+    sys.stdout.flush()
+
+class qsub_wrap_client_cmd_opts(cmd_opts):
+    def __init__(self):
+        #             (type, default)
+        # types supported
+        #   s : string
+        #   i : int
+        #   f : float
+        #   l : list of strings
+        #   None : flag
+        cmd_opts.__init__(self)
+        self.connect_to = ("s", None)
+        self.hello = ("s", None)
+        self.taskset = ("s", None)
+        self.base64cmd = ("s", None)
+
+class bind_by_taskset:
+    """
+    usage:
+    if bind_to_one_proc().bind() == 0: 
+      OK
+    else:
+      FAILED
+    """
+    def runcmd(self, cmd):
+        fp = os.popen(cmd)
+        res = fp.read()
+        ret = fp.close()
+        return ret,res
+
+    def get_current_affinity_mask(self, pid):
+        pid = os.getpid()
+        cmd = ("taskset -p %s" % pid)
+        ret,res = self.runcmd(cmd)
+        m = re.search("pid \d+'s current affinity mask: ([0-9a-f]+)", res)
+        if m is None:
+            Es(("error: could not obtain affinity mask of %d ('%s' failed. output=%s)\n"
+                % (pid, cmd, res)))
+            return 0
+        else:
+            mask_s = m.group(1)
+            try:
+                return int(mask_s, 16)
+            except ValueError:
+                Es("error: could not parse output of '%s' (%s)\n" % (cmd, res))
+                return 0
+
+    def set_current_affinity_mask(self, pid, mask):
+        pid = os.getpid()
+        cmd = ("taskset -p 0%x %s" % (mask, pid))
+        ret,res = self.runcmd(cmd)
+        if ret is None:
+            # doublecheck
+            new_mask = self.get_current_affinity_mask(pid)
+            if mask == new_mask:
+                return 0            # OK
+            else:
+                Es(("error: tried to set affinity mask of %d, but "
+                    "new mask (%d) is different from what was specified (%d) "
+                    "('%s' ran, but did not work)\n"
+                    % (pid, new_mask, mask, cmd)))
+                return -1           # failed
+        else:
+            Es(("error: could not set affinity mask of %d ('%s' failed)\n"
+                % (pid, cmd)))
+            return -1
+
+    def get_msb(self, x):
+        assert x > 0
+        for m in range(31, 0, -1):
+            if (x & (1 << m)) != 0:
+                return (1 << m)
+        assert 0                    # shall not happen
+        return 0
+
+    def do_bind(self):
+        pid = os.getpid()
+        mask = self.get_current_affinity_mask(pid)
+        if mask == 0: return -1
+        new_mask = self.get_msb(mask)
+        return self.set_current_affinity_mask(pid, new_mask)
+
+
+
+class qsub_wrap_client:
+    def usage(self):
+        Es(r"""usage (client mode):
+  qsub_wrap --connect_to host:port --hello some_string [--taskset path_to_taskset] command ...
+""")
+    
+    def init(self, argv):
+        self.cmd = argv[0]
+        self.opt = qsub_wrap_client_cmd_opts()
+        if self.opt.parse(argv[1:]) == -1:
+            self.usage()
+            return -1
+        if self.opt.base64cmd is None:
+            self.usage()
+            return -1
+        if self.opt.connect_to is None:
+            self.usage()
+            return -1
+        if self.opt.hello is None:
+            self.usage()
+            return -1
+        addr_port = string.split(self.opt.connect_to, ":", 1)
+        if len(addr_port) != 2:
+            Es("%s : wrong arg to --connect_to (must be host:port)\n" \
+               % self.cmd)
+            self.usage()
+            return -1
+        [ self.addr, port_string ] = addr_port
+        try:
+            self.port = int(port_string)
+        except ValueError,e:
+            Es("%s : wrong arg to --connect_to (port must be int)\n" \
+               % self.cmd)
+            self.usage()
+            return -1
+        # self.client_cmd = self.opt.args
+        self.client_cmd = eval(base64.decodestring(self.opt.base64cmd))
+        return 0
+        
+    def timed_connect(self, timeout):
+        host = socket.gethostname()
+        so = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        if dbg>=2:
+            Es("%s : %s : connect to %s:%d\n" \
+               % (self.cmd, host, self.addr, self.port))
+        so.setblocking(0)
+        try:
+            so.connect((self.addr, self.port))
+        except socket.error,e:
+            if e.args[0] != errno.EINPROGRESS: raise
+        _,W,_ = select.select([], [so], [], timeout)
+        if len(W) == 0:
+            Es("%s : %s : connect to %s:%d timed out\n" % \
+               (self.cmd, host, self.addr, self.port))
+            return None
+        so.setblocking(1)
+        hello = ""
+        try:
+            hello = so.recv(len(self.opt.hello))
+        except socket.error,e:
+            pass
+        if hello != self.opt.hello:
+            Es("%s : %s : connect to %s:%d failed %s\n" % \
+               (self.cmd, host, self.addr, self.port, e.args))
+            return None
+        if dbg>=2:
+            Es("%s : %s : connected to %s:%d\n" \
+               % (self.cmd, host, self.addr, self.port))
+        return so
+
+    def main(self, argv):
+        if self.init(argv) == -1: return 1
+        if dbg>=2: Es("%s : running as a client\n" % self.cmd)
+        stdin_so = self.timed_connect(5.0)
+        if stdin_so is None: return 1
+        stdout_so = self.timed_connect(5.0)
+        if stdout_so is None: return 1
+        stderr_so = self.timed_connect(5.0)
+        if stderr_so is None: return 1
+        os.dup2(stdin_so.fileno(), 0)
+        os.dup2(stdout_so.fileno(), 1)
+        os.dup2(stderr_so.fileno(), 2)
+
+        # is this the right place?
+        if self.opt.taskset:
+            if bind_by_taskset().do_bind() == -1:
+                # if self.opt.bind_to_one_proc is not 0 or 1,
+                # try it, but go ahead even when failed
+                return 1
+
+        # Es("%s : client_cmd = %s\n" % (self.cmd, self.client_cmd))
+        # os.execvp(self.client_cmd[0], self.client_cmd)
+        os.execvp("/bin/sh", [ "/bin/sh", "-c", self.client_cmd ])
+
+def main():
+    assert (len(sys.argv) > 1 and  sys.argv[1] == "--connect_to"), sys.argv
+    c = qsub_wrap_client()
+    return c.main(sys.argv)
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+# $Log: qsub_wrap_client,v $
+# Revision 1.3  2012/04/03 13:00:30  ttaauu
+# *** empty log message ***
+#
+# Revision 1.2  2009/06/06 14:06:26  ttaauu
+# added headers and logs
+#

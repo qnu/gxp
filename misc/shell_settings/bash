@@ -1,0 +1,12 @@
+# make your prompt nice with GXP (like whatever[A/B/C]% )
+export PS1='\h:\W`gxpc prompt 2> /dev/null`% '
+# set aliases for frequently used commands
+alias mw='gxpc mw'
+alias e='gxpc e'
+alias smask='gxpc smask'
+alias rmask='gxpc rmask'
+alias savemask='gxpc savemask'
+alias explore='gxpc explore'
+alias use='gxpc use'
+alias gcd='gxpc cd'
+alias gexport='gxpc export'

@@ -1,0 +1,163 @@
+#!/usr/bin/env python
+
+import errno,os,pty,re,select,signal,string,sys
+
+dbg=0
+efd = None
+
+def LOG(s):
+    os.write(efd, s)
+
+#
+# (1) ./su_cmd whoami ---> exec "su -c whoami"
+# (2) wait for "Password: " prompt and send password
+# (3) get stdout of the child process
+#
+# It may kill the child process when it waited until timeout
+# got a strange string from the child process.
+#
+# Exit status is normally that of the child process (ssh), or
+# 255 when the child was killed.
+#
+
+#
+# Timeout for each 'read' operation.
+# It should be long enough so distant hosts can respond.
+#
+read_timeout = 5.0
+read_timeout_after_pw = 5.0
+
+# Probably you need not modify parameters below.
+write_timeout = 1.0
+
+def safe_read(fd, bytes, timeout, show_error):
+    """
+    Read string from child or timeout.
+    """
+    if timeout is None:
+        R,W,E = select.select([fd],[],[])
+    else:
+        R,W,E = select.select([fd],[],[],timeout)
+    if len(R) == 0:
+        if dbg>=2: LOG("read: read timeout\n")
+        return (-1, None)
+    try:
+        x = os.read(fd, bytes)
+    except OSError,e:
+        if show_error:
+           if dbg>=2: LOG("read: %s\n" % (e.args, ))
+        return (-1, e)
+    if dbg>=2: LOG("read => '%s'\n" % x)
+    return (0, x)
+
+def safe_write(fd, str, timeout, show_error):
+    """
+    Write a string to child or timeout.
+    """
+    R,W,E = select.select([],[fd],[],timeout)
+    if len(W) == 0:
+        if dbg>=2: LOG("write: write timeout\n")
+        return (-1, None)
+    try:
+        x = os.write(fd, str)
+    except OSError,e:
+        if show_error:
+            if dbg>=2: LOG("write: %s\n" % (e.args,))
+        return (-1, e)
+    if dbg>=2: LOG("write => %s\n" % x)
+    return (x, None)
+
+def cleanup(pid):
+    """
+    Check if pid exists. If so, kill it with SIGKILL.
+    """
+    try:
+        os.kill(pid, 0)
+    except OSError,e:
+        if e.args[0] == errno.ESRCH:    # no such process
+            return
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except OSError,e:
+        if e.args[0] == errno.ESRCH:    # no such process
+            return
+
+def wait_for_password_prompt(fd, passphrase):
+    bytes_to_read = 1
+    output_s = ""
+    while 1:
+        r,s = safe_read(fd, bytes_to_read, read_timeout, 1)
+        if r == -1: return -1
+        output_s = output_s + s
+        if dbg>=2: LOG("[%s]\n" % output_s)
+        m = re.search("Password: ", output_s)
+        if m: break
+
+    r,s = safe_write(fd, "%s\r\n" % passphrase, write_timeout, 1)
+    if r == -1: return -1
+    while 1:
+        r,s = safe_read(fd, bytes_to_read, read_timeout, 1)
+        if r == -1: return -1
+        output_s = output_s + s
+        if dbg>=2: LOG("[%s]\n" % output_s)
+        m = re.search("Password: (.*)\r\n", output_s)
+        if m: break
+    return 0
+
+def parent(fd, passphrase):
+    """
+    Main procedure of the parent.
+    Input passphrase if asked.
+    """
+    if wait_for_password_prompt(fd, passphrase) == -1:
+        return -1
+    bytes_to_read = 1
+    while 1:
+        r,s = safe_read(fd, bytes_to_read, read_timeout_after_pw, 1)
+        if r == -1: return -1
+        os.write(1, s)
+    return 0
+
+def main(argv):
+    global efd
+    passphrase = os.environ.get("SU_PASSWORD")
+    if passphrase is None:
+        sys.stderr.write("su_cmd: SU_PASSWORD not set\n")
+        os._exit(255)
+    user = os.environ.get("SU_USER")
+    os.environ["LANG"] = "C"
+    # fork with pty
+    pid,master = pty.fork()
+    assert pid != -1
+    if pid == 0:
+        # child. run su
+        if user is None:
+            cmd = [ "su", "-c", string.join(argv[1:], " ") ]
+        else:
+            cmd = [ "su", user, "-c", string.join(argv[1:], " ") ]
+        os.execvp(cmd[0], cmd)
+    else:
+        if dbg>=2:
+            efd = 2 # os.open("su_cmd.log", os.O_WRONLY|os.O_CREAT|os.O_TRUNC)
+        # parent. talk to child.
+        r = parent(master, passphrase)
+        # ensure child is gone
+        if dbg>=2: LOG("cleanup\n")
+        cleanup(pid)
+        # write whatever we get from child
+        # os.write(1, s)
+        # wait for child to disappear
+        if dbg>=2: LOG("wait for child to terminate\n")
+        qid,status = os.wait()
+        assert pid == qid
+        if dbg>=2: LOG("child finished\n")
+        if os.WIFEXITED(status):
+            # child normally exited. forward its status
+            os._exit(os.WEXITSTATUS(status))
+        else:
+            # child was killed. return 255
+            os._exit(255)
+        if dbg>=2: os.close(efd)
+
+if __name__ == "__main__":
+    main(sys.argv)

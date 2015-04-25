@@ -1,0 +1,2 @@
+SHELL=mksh
+GXP_MAKE_LOCAL_EXEC====

@@ -1,0 +1,568 @@
+#!/usr/bin/env python
+
+#import commands
+#import getopt
+import Queue
+import errno,os,random,re,select,socket,string,sys,time,struct,stat,threading,signal
+
+"""
+Protocol:
+(c)->(s)
+MKFILE %s %s 
+
+TERM
+
+LOG %s 
+
+
+Error cands:
+** 0x: network error
+00:(s) failed to bind #OK
+  (s): exit
+  (c): timeout
+
+01:(c) failed to connect #OK
+  (s): wait for timeout
+  (c): exit
+
+02:(s) connection suddenly closed from the client #OK
+  (s): print error, log it, and proceed to the next request
+
+03:(c) server suddenly closed the connection #OK
+  (c): print error and exit
+
+
+
+
+** 1x: client file error
+10:(c) target directory is not found 
+  (c): print error
+
+11:(c) target directory is found but some files are not readable
+  (c): close the connection
+  (s): #02 occurs
+
+
+
+** 2x: server file error 
+20:(s) target directory is not writable
+  (s): not bind
+  (c): timeout
+
+21:(s) target directory is full #OK
+  (s): write
+  (c): close the connection
+
+22:(s) target directory is full #OK
+  (s): close the current connection, and proceed to the next host
+  (c): closed the connection by the server
+
+
+"""
+
+debug = 0
+
+PKT_SIZE = 1024
+N_THREADS = 50
+
+my_addr = ""
+my_hostname = ""
+
+
+def Es(s):
+    sys.stderr.write(s)
+    sys.stderr.flush()
+
+def M(s):
+    sys.stderr.write("%s: %s"%(my_hostname, s))
+    sys.stderr.flush()
+
+def Ws(s):
+    sys.stdout.write(s)
+    sys.stdout.flush()
+
+
+def safe_atoi(s):
+    try:
+        n = string.atoi(s)
+        return n
+    except ValueError:
+        return None
+
+
+def open_for_read(f):
+    if f == "-": return sys.stdin
+    try:
+        fp = open(f, "rb")
+        return fp
+    except IOError:
+        M("Could not open %s for reading\n" % f)
+        os._exit(1)
+        
+def open_for_append(f):
+    try:
+        fp = open(f, "ab")
+        return fp
+    except IOError:
+        M("Could not open %s for reading\n" % f)
+        os._exit(1)
+        
+
+def open_for_write(f):
+    if f == "-": return sys.stdin
+    try:
+        fp = open(f, "wb")
+        return fp
+    except IOError:
+        M("Could not open %s for writing\n" % f)
+        os._exit(1)
+        
+
+#------- SOCKET
+
+    
+class Socket:
+    """ Wrapped Socket """
+    def __init__(self, sock=None, peer=None):
+        """ Create a socket """
+        self.sock = sock
+        self.peer = peer
+        if self.sock is None:
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+    
+    def connect(self, peer):
+        """ Mtablish a connection (Peer: (host, port))"""
+        assert peer is not None
+        self.peer = peer
+        self.sock.connect(self.peer)
+        if self.sock is None:
+            raise "Could not establish a connection to %s:%d"%(self.peer[0], self.peer[1])
+        if debug >= 2:
+            M("New connection to %s:%d\n"%(self.peer[0], self.peer[1]))
+
+
+    def connect_persistently(self, n_trial):
+        """ Try to connect n times """
+        for i in range(n_trial):
+            try:
+                self.sock.connect(self.peer)
+                #if self.sock is not None:
+                return True
+            except socket.error, se:
+                r = random.random()
+                if debug >= 1:
+                    M("Try to connect after %d sec\n"%r)
+                    time.sleep(random.random())
+        # Failed to connect    
+        return False
+
+
+    def close(self):
+        """ Close the socket """
+        self.sock.close()
+
+        
+    def send(self, msg, msglen = -1):
+        """ Safe send() """
+        if msglen == -1:
+            msglen = len(msg)
+        totalsent = 0
+        while totalsent < msglen:
+            sent = self.sock.send(msg[totalsent:])
+            if sent == 0:
+                raise RuntimeError, "socket connection broken"
+            totalsent = totalsent + sent
+
+
+    def recv(self, msglen):
+        """ Safe recv() """
+        msg = ''
+        while len(msg) < msglen:
+            chunk = self.sock.recv(msglen-len(msg))
+            if chunk == '':
+                raise RuntimeError, "socket connection broken"
+            msg = msg + chunk
+        return msg
+
+
+    def rawrecv(self, msglen):
+        try:
+            return self.sock.recv(msglen)
+        except:
+            raise RuntimeError, "failed to rawrecv (msglen=%d)"% msglen
+            M("failed to rawrecv (msglen=%d)"% msglen)
+            #sys.exit(1)
+
+    def sendInt(self, value):
+        self.send(struct.pack('i', value))
+
+    def recvInt(self):
+        msg = self.recv(struct.calcsize('i'))
+        return struct.unpack('i', msg)[0]
+
+
+class ServerSocket:
+    def __init__(self, initial_port=54321, port=None):
+        """ Create a socket """
+        """  peer : (hostname, port) """
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if port is not None:
+            self.bind(port)
+        else:
+            self.bind_persistently(initial_port)
+        self.sock.listen(5) # arg : number of backlog
+
+
+    def bind_persistently(self, initial_port):
+        for self.port in range(initial_port, 65535):
+            try:
+                self.sock.bind((socket.gethostbyname(socket.gethostname()), self.port))
+                if debug >= 2:
+                    M("Binded on %d\n"%self.port)
+                return
+            except socket.error, msg:
+                #M("Err: on bind(): %s\n"%msg)
+                continue
+            break
+        if self.port == 65534:
+            raise Exception("Failed to bind any port")
+
+
+    def bind(self, port):
+        try:
+            self.sock.bind((socket.gethostbyname(socket.gethostname()), port))
+        except socket.error, msg:
+            #raise Exception("Failed to bind at %d"%(port))
+            Es("*** Error on the server(#00): Failed to bind on the port %d\n"%(port))
+            sys.exit(1)
+        self.port = port
+        if debug >= 2:
+            M("Binded on %d\n"%self.port)
+                            
+        
+    def accept(self):
+        conn,peer = self.sock.accept()
+        #if debug >= 2 :
+        #    M("Accepted from %s:%d\n"%(peer[0], peer[1]))
+        return Socket(sock=conn, peer=peer)
+
+    def close(self):
+        self.sock.close()
+
+#-------END OF SOCKET
+
+
+class Log:
+    def __init__(self, fn):
+        self.fn = fn
+        self.fp = open_for_append(self.fn)
+
+    def close(self):
+        self.fp.close()
+        
+    def write(self, line):
+        """
+        record that a task NAME has finished with status (and some other info) = val
+        """
+        self.fp.write(line)
+        self.fp.flush()
+
+    def write_ts(self, line): # Write with timestamp
+        """
+        record that a task NAME has finished with status (and some other info) = val
+        """
+        self.fp.write("%s %s\n"%(self.gettimestr(), line))
+        self.fp.flush()
+
+    def gettimestr(self):
+        yy,mm,dd,h,m,s,_,_,_ = time.localtime()
+        return "%02d/%02d %02d:%02d:%02d"%(mm,dd,h,m,s)
+    
+#----------
+
+
+def ensure_dir(path):
+    """
+    ensure directory PATH exists, creating its ancestors if necessary
+    """
+    if os.access(path, os.F_OK):
+        ensure_dir_1(path)
+    elif path != "/":
+        ensure_dir(os.path.dirname(path))
+        ensure_dir_1(path)
+
+        
+def ensure_dir_1(dire):
+    """
+    ensure directory DIRE exists, assuming its direct parent directory
+    exists.
+    i.e., if dire = 'a/b/c', we assume a/b exists
+    """
+    if not os.access(dire, os.F_OK):
+        try:
+            os.mkdir(dire)
+        except OSError:
+            pass
+    if not os.access(dire, os.F_OK):
+        M("Output directory %s does not exist and could not create it\n" \
+          % dire)
+        os._exit(1)
+    s = os.stat(dire)
+    if not stat.S_ISDIR(s[0]):
+        M("%s is not a directory %s\n" % dire)
+        sys.exit(1)
+    if not os.access(dire, os.W_OK):
+        M("Directory %s not writable\n" % dire)
+        sys.exit(1)
+
+
+
+#--------
+
+class Server:
+    def __init__(self):
+        pass
+
+        
+    def recv_cmd(self, sock):
+        try:
+            msg = sock.recv(512)
+        except:
+            self.log.write_ts("Connection sueednly closed by %s")
+            M("Server(#02): Failed to recv from %s\n"%(sock.peer[0]))
+            return "TERM", None
+
+        msg = msg.strip()
+        if debug >= 2:
+            M("server rcvd <%s> msg\n"%msg)
+        A = msg.split(" ", 1)
+        if len(A) == 0:
+            assert False
+        if len(A) == 1:
+            return A[0], None
+        else:
+            return A
+
+
+    def process_mkfile_cmd(self, sock, fn, size):
+        ensure_dir(os.path.dirname(fn))
+        if debug >= 1:
+            M("(s) Receiving %s\n"%fn)
+        if (not self.force_flag) and os.path.exists(fn):
+            M("*** Error the server(#22): File %s already exists\n"%(fn))
+            self.log.write_ts("File %s already exists"%(fn))
+            sock.close()
+            return False
+
+        fp = open(fn, "wb")
+        rcvd = 0
+        X = None
+        if debug >= 1:
+            M("(s) Ready to write to %s\n"%fn)
+        while rcvd < size:
+            pkt_size = PKT_SIZE
+            if size - rcvd < pkt_size:
+                pkt_size = size - rcvd
+            try:
+                X = sock.recv(pkt_size)
+            except:
+                self.log.write_ts("Connection sueednly closed by %s")
+                M("Server(#02): Failed to recv from %s\n"%(sock.peer[0]))
+                return False
+
+            try:
+                fp.write(X)
+            except IOError, e:
+                """21:(s) target directory is full"""
+                M("Server(#21): Failed to write (hostname=%s, fn=%s)\n"%(my_hostname, fn))
+                sock.close()
+                sys.exit(1)
+            rcvd += len(X)
+            if debug >= 2:
+                M("(s) wrote %d bytes on %s\n"%(rcvd, fn))
+        fp.close()
+        return True #Correctly exitted
+    
+    
+    def process_recv(self, sock):
+        n_rcvd_files = 0
+        if debug >= 1:
+            M("Start to receive from %s\n"%(sock.peer[0]))
+        while True:
+            cmd,rest = self.recv_cmd(sock)
+            if cmd == "MKFILE":
+                n_rcvd_files += 1
+                fn,size = rest.split()
+                size = safe_atoi(size)
+                ret = self.process_mkfile_cmd(sock, "%s/%s"%(self.basedir, fn), size)
+                if not ret: return
+            elif cmd == "TERM":
+                if debug >= 1:
+                    M("Received %d files from %s\n"%(n_rcvd_files, sock.peer[0]))
+                return
+            else:
+                M("(s) Received invalid cmd (%s), exitting.\n"%cmd)
+                sys.exit(1)
+
+
+    def server_child(self):
+        while True:
+            sock = self.sock_q.get()
+            if sock is None:
+                if debug >= 1: M("server exitting\n")
+                return
+            self.process_recv(sock)
+
+
+    def run(self, port, basedir, n_clients, force_flag):
+        self.basedir = basedir
+        self.force_flag = force_flag
+        self.sock_q = Queue.Queue()
+        self.log = Log("gather_log")
+        ss = ServerSocket(port=port)
+        ths = []
+        for i in range(N_THREADS):
+            if debug >= 2:
+                M("Creating %dth thread\n"%i)
+            th = threading.Thread(target=self.server_child, args=())
+            th.start()
+            ths.append(th)
+
+        for i in range(n_clients):
+            sock = ss.accept()
+            if debug >= 2:
+                M("Acceptted %dth client (%s)\n"%(i, sock.peer[0]))
+            self.log.write_ts("Acceptted %dth client (%s)\n"%(i, sock.peer[0]))
+            self.sock_q.put(sock)
+            
+        # Make every thread terminate
+        for i in range(N_THREADS):
+            self.sock_q.put(None) # Terminate tag
+
+        for th in ths:
+            th.join()
+
+        self.log.close()
+
+
+
+
+class Client:
+    def __init__(self):
+        pass
+
+    def send_cmd(self, sock, msg):
+        try:
+            sock.send("%0512s"%(msg))
+        except:
+            M("Client(#03): Failed to send\n")
+            sys.exit(1)
+        if debug >= 2:
+            M("(c) sent <%s> msg\n"%msg)
+
+
+    def send_file_cmd(self, sock, fn, size):
+        send_fn = "%s/%s"%(my_hostname, fn)
+        cmd = "MKFILE %s %d"%(send_fn, size)
+        self.send_cmd(sock, cmd)
+        
+
+    def send_term_cmd(self, sock):
+        cmd = "TERM"
+        self.send_cmd(sock, cmd)
+
+
+    def send_file(self, sock, filename, size):
+        if debug >= 1:
+            M("(c) start to send %s (%d bytes)\n"%(filename,size) )
+        fp = open_for_read(filename)
+        assert fp is not None
+        sent = 0
+        while sent < size:
+            X=""
+            try:
+                X = fp.read(PKT_SIZE)
+            except IOError:
+                M("Client(#11): Error on reading file %s"%filename)
+                sys.exit(1)
+            try:
+                sock.send(X)
+            except:
+                M("Client(#03): Failed to send (sent=%d)\n"%sent)
+                sys.exit(1)
+            sent += len(X)
+        assert sent == size
+        if debug >= 1:
+            M("(c) sent %s (%d bytes)\n"%(filename,size) )
+        fp.close()
+
+
+    def run(self, addr, port, dirname):
+        assert dirname[0] == '/'
+        sock = Socket(peer=(addr, port))
+        succeeded = sock.connect_persistently(n_trial = 5)
+        if not succeeded:
+            Es("Client(#01): Failed to connect\n")
+            sys.exit(1)
+
+        if not os.path.exists(dirname):
+            M("Directory %s is not found"%dirname)
+        else:
+            for root,dirs,files in os.walk(dirname):
+                _,rel_dirname = root.split(dirname, 1)
+
+                for filename in files:
+                    abs_filename = "%s/%s"%(root, filename)
+                    rel_filename = rel_dirname + filename
+                    size = os.path.getsize(abs_filename)
+                    if debug >= 1:
+                        M("root = %s, abs = %s, rel = %s (size=%d)\n"
+                           %(root, abs_filename, rel_filename, size))
+
+                    self.send_file_cmd(sock, rel_filename, size)
+                    self.send_file(sock, abs_filename, size)
+        self.send_term_cmd(sock)
+        sock.close()
+
+
+
+def main():
+    global my_addr, my_hostname
+    def parse_args():
+        try:
+            force_flag = False
+            args = sys.argv[1:]
+            if "-f" in args:
+                force_flag = True
+                args.remove("-f")
+            src_dirname, dest_arg = args
+            A = dest_arg.split(":")
+            if len(A) != 3: M("Invalid destination path: %s\n"%(dest_arg))
+            dest_hostname,dest_port,dest_dirname = A
+            dest_port = safe_atoi(dest_port)
+            return src_dirname,dest_hostname,dest_port,dest_dirname, force_flag
+        except Exception, e:
+            M("%s\n"%str(e))
+            usage()
+            sys.exit(1)
+    
+    def usage():
+        msg  = " Usage: gxpc e gather [-f] SRC_DIR DEST_HOST:PORT:DIR\n"
+        msg += "  Copy every file to DEST_HOSTNAME \n"
+        print msg
+        
+    src_dirname,dest_hostname,dest_port,dest_dirname,force_flag = parse_args()
+    dest_addr = socket.gethostbyname(dest_hostname)
+    my_hostname = socket.gethostname()
+    my_addr = socket.gethostbyname(my_hostname)
+    src_dirname = os.path.abspath(src_dirname)
+    dest_dirname = os.path.abspath(dest_dirname)
+    n_hosts = safe_atoi(os.environ["GXP_NUM_EXECS"])
+    if my_addr == dest_addr:
+        server = Server().run(dest_port, dest_dirname, n_hosts-1, force_flag)
+    else:
+        Client().run(dest_addr, dest_port, src_dirname)
+
+main()

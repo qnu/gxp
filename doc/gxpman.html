@@ -1,0 +1,2515 @@
+<html lang="en">
+<head>
+<title>GXP3 User's Guide</title>
+<meta http-equiv="Content-Type" content="text/html">
+<meta name="description" content="GXP3 User's Guide">
+<meta name="generator" content="makeinfo 4.13">
+<link title="Top" rel="top" href="#Top">
+<link href="http://www.gnu.org/software/texinfo/" rel="generator-home" title="Texinfo Homepage">
+<meta http-equiv="Content-Style-Type" content="text/css">
+<style type="text/css"><!--
+  pre.display { font-family:inherit }
+  pre.format  { font-family:inherit }
+  pre.smalldisplay { font-family:inherit; font-size:smaller }
+  pre.smallformat  { font-family:inherit; font-size:smaller }
+  pre.smallexample { font-size:smaller }
+  pre.smalllisp    { font-size:smaller }
+  span.sc    { font-variant:small-caps }
+  span.roman { font-family:serif; font-weight:normal; } 
+  span.sansserif { font-family:sans-serif; font-weight:normal; } 
+--></style>
+</head>
+<body>
+Copyright 2007 Kenjiro Taura (Read COPYRIGHT for detailed information.)
+
+<div class="node">
+<a name="Top"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#Getting-Started">Getting Started</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#dir">(dir)</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#dir">(dir)</a>
+
+</div>
+
+<link rel="STYLESHEET" href="gxpman.css" type="text/css" />
+<h1>GXP3 User Manual</h1>
+<ul class="menu">
+<li><a accesskey="1" href="#Getting-Started">Getting Started</a>
+<li><a accesskey="2" href="#Tutorial">Tutorial</a>
+<li><a accesskey="3" href="#Using-GXP-make-for-Parallel-Processing">Using GXP make for Parallel Processing</a>
+<li><a accesskey="4" href="#GXP-internals">GXP internals</a>
+<li><a accesskey="5" href="#Command-Reference">Command Reference</a>
+<li><a accesskey="6" href="#Tools-Reference">Tools Reference</a>
+<li><a accesskey="7" href="#Troubleshooting">Troubleshooting</a>
+<li><a accesskey="8" href="#Environment-Variables-Reference">Environment Variables Reference</a>
+<li><a accesskey="9" href="#Key-Stroke-Reference">Key Stroke Reference</a>
+
+</li></ul>
+<p>--- The Detailed Node Listing ---
+
+<p>Getting Started
+
+</p>
+<ul class="menu">
+<li><a href="#Prerequisites">Prerequisites</a>
+<li><a href="#Installation">Installation</a>
+
+</li></ul>
+<p>Tutorial
+
+</p>
+<ul class="menu">
+<li><a href="#Testing-Your-Installation">Testing Your Installation</a>
+<li><a href="#Running-commands-via-e-command">Running commands via e command</a>
+<li><a href="#Getting-more-hosts-with-use_002fexplore-commands">Getting more hosts with use/explore commands</a>
+<li><a href="#Introduction-to-SSH-for-GXP-Users">Introduction to SSH for GXP Users</a>
+<li><a href="#Quick-Reference-of-Frequently-Used-Commands">Quick Reference of Frequently Used Commands</a>
+
+</li></ul>
+<p>Using GXP make for Parallel Processing
+
+</p>
+<ul class="menu">
+<li><a href="#GXP-make">GXP make</a>
+
+</li></ul>
+<p>GXP internals
+
+</p>
+<ul class="menu">
+<li><a href="#Files">Files</a>
+
+</li></ul>
+<p>Command Reference
+
+</p>
+<ul class="menu">
+<li><a href="#cd">cd</a>
+<li><a href="#e">e</a>
+<li><a href="#ep">ep</a>
+<li><a href="#explore">explore</a>
+<li><a href="#export">export</a>
+<li><a href="#help">help</a>
+<li><a href="#i">i</a>
+<li><a href="#js">js</a>
+<li><a href="#log_005flevel">log_level</a>
+<li><a href="#make2">make2</a>
+<li><a href="#make">make</a>
+<li><a href="#makectl">makectl</a>
+<li><a href="#makeman">makeman</a>
+<li><a href="#mapred">mapred</a>
+<li><a href="#ping">ping</a>
+<li><a href="#popmask">popmask</a>
+<li><a href="#pp">pp</a>
+<li><a href="#prof_005fstart">prof_start</a>
+<li><a href="#smask">smask</a>
+<li><a href="#quit">quit</a>
+<li><a href="#reclaim">reclaim</a>
+<li><a href="#restoremask">restoremask</a>
+<li><a href="#rmask">rmask</a>
+<li><a href="#rsh">rsh</a>
+<li><a href="#set_005fmax_005fbuf_005flen">set_max_buf_len</a>
+<li><a href="#show_005fexplore">show_explore</a>
+<li><a href="#showmasks">showmasks</a>
+<li><a href="#stat">stat</a>
+<li><a href="#trim">trim</a>
+<li><a href="#use">use</a>
+<li><a href="#version">version</a>
+<li><a href="#vgxp">vgxp</a>
+
+</li></ul>
+<p>Key Stroke Reference
+
+</p>
+<ul class="menu">
+<li><a href="#Indices">Indices</a>
+<li><a href="#Function-Index">Function Index</a>
+<li><a href="#Variable-Index">Variable Index</a>
+<li><a href="#Data-Type-Index">Data Type Index</a>
+<li><a href="#Program-Index">Program Index</a>
+<li><a href="#Concept-Index">Concept Index</a>
+
+</li></ul>
+<p>Indices
+
+</p>
+<ul class="menu">
+<li><a href="#Function-Index">Function Index</a>
+<li><a href="#Variable-Index">Variable Index</a>
+<li><a href="#Data-Type-Index">Data Type Index</a>
+<li><a href="#Program-Index">Program Index</a>
+<li><a href="#Concept-Index">Concept Index</a>
+
+   </ul>
+
+<div class="node">
+<a name="Getting-Started"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#Tutorial">Tutorial</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#Top">Top</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Top">Top</a>
+
+</div>
+
+<h2 class="chapter">1 Getting Started</h2>
+
+<ul class="menu">
+<li><a accesskey="1" href="#Prerequisites">Prerequisites</a>
+<li><a accesskey="2" href="#Installation">Installation</a>
+</ul>
+
+<div class="node">
+<a name="Prerequisites"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#Installation">Installation</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#Getting-Started">Getting Started</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Getting-Started">Getting Started</a>
+
+</div>
+
+<h3 class="section">1.1 Prerequisites</h3>
+
+<p>In order to play with GXP, you need
+     <ul>
+<li>a Unix platform
+<li>Python interpreter
+</ul>
+   To do anything interesting with GXP, you should be able to remote
+login (e.g., via SSH, RSH, QSUB, etc.) computers you want to use.
+
+   <p>GXP has been developed on Linux and tested on Linux and FreeBSD.  It
+has been tested with Python 1.5.2, 2.2.2, 2.3.4, and 2.4.2.  There are
+high chances that it runs with later versions of Python.
+
+   <p>Python is a very popular programming language that is installed on
+most Linux platforms. For remote logins, it's very likely that it
+accepts SSH logins. Thus there are chances that the above prerequisits
+are already satisfied in your platform.
+
+<div class="node">
+<a name="Installation"></a>
+<p><hr>
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#Prerequisites">Prerequisites</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Getting-Started">Getting Started</a>
+
+</div>
+
+<h3 class="section">1.2 Installation</h3>
+
+<p>You can obtain the latest version (tarball) from sourceforge:
+<pre class="example">         http://sourceforge.net/projects/gxp/
+</pre>
+   <p>and then unpack the tarball by something like:
+<pre class="example">         tar zxvf gxp3.xx.tar.bz2
+</pre>
+   <p>The exact file name (and the directory name) depends on the current
+version of GXP. Perhaps you want to make a symlink <tt>gxp3</tt> to the
+directory you obtained, or directly rename the directory to <tt>gxp3</tt>.
+
+   <p>If you have cvs, you can use it to obtain the latest copy under development.
+<pre class="example">     cvs -d :pserver:anonymous@gxp.cvs.sourceforge.net:/cvsroot/gxp co gxp3
+</pre>
+   <p>Either way, you will have directory called <tt>gxp3</tt>. Since GXP and
+accompanying tools are all written in Python, you need no compilation. 
+Instead, all you need to do is either to:
+
+     <ol type=1 start=1>
+<li>make a symlink from anywhere in your path to <tt>gxp3/gxpc</tt>. For example,
+     <pre class="example">          ln -s /absolute/path/to/gxp3/gxpc /usr/local/bin/gxpc
+</pre>
+     <p>or,
+
+     <li>add <tt>gxp3</tt> directory to your PATH environment variable. For example,
+add the following line in your <tt>.bashrc</tt>.
+     <pre class="example">          export PATH=$PATH:/absolute/path/to/gxp3
+</pre>
+     </ol>
+
+   <p>In the former, it is important to make a symlink to, not a copy of,
+<tt>gxpc</tt>. Otherwise it fails to find accompanying files under <tt>gxp3</tt>
+directory.
+
+   <p>To test your installation, type <tt>gxpc</tt> to your shell prompt and see
+something like this.
+<pre class="example">     $ gxpc
+     gxpc: no daemon found, create one
+     /tmp/gxp-you/gxpsession-hongo019-you-2007-07-03-13-56-21-3561-19041263
+</pre>
+   <p>See <a href="#Troubleshooting">Troubleshooting</a>, if you fail.
+
+<div class="node">
+<a name="Tutorial"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#Using-GXP-make-for-Parallel-Processing">Using GXP make for Parallel Processing</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#Getting-Started">Getting Started</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Top">Top</a>
+
+</div>
+
+<h2 class="chapter">2 Tutorial</h2>
+
+<ul class="menu">
+<li><a accesskey="1" href="#Testing-Your-Installation">Testing Your Installation</a>
+<li><a accesskey="2" href="#Running-commands-via-e-command">Running commands via e command</a>
+<li><a accesskey="3" href="#Getting-more-hosts-with-use_002fexplore-commands">Getting more hosts with use/explore commands</a>
+<li><a accesskey="4" href="#Introduction-to-SSH-for-GXP-Users">Introduction to SSH for GXP Users</a>
+<li><a accesskey="5" href="#Quick-Reference-of-Frequently-Used-Commands">Quick Reference of Frequently Used Commands</a>
+</ul>
+
+<div class="node">
+<a name="Testing-Your-Installation"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#Running-commands-via-e-command">Running commands via e command</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#Tutorial">Tutorial</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Tutorial">Tutorial</a>
+
+</div>
+
+<h3 class="section">2.1 Testing Your Installation</h3>
+
+<p>The most basic function of GXP is to run commands on many hosts. To
+this end, you first need to learn how to run commands and how to
+acquire those hosts.
+
+   <p>GXP is run from a regular shell prompt. For those who have used prior
+versions of GXP, this has been changed in this version.
+
+<div class="node">
+<a name="Running-commands-via-e-command"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#Getting-more-hosts-with-use_002fexplore-commands">Getting more hosts with use/explore commands</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#Testing-Your-Installation">Testing Your Installation</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Tutorial">Tutorial</a>
+
+</div>
+
+<h3 class="section">2.2 Running commands via e command</h3>
+
+<p>Given you put gxpc in your PATH in one way or another, type
+the following to your shell prompt.
+<pre class="example">     $ gxpc e whoami
+</pre>
+   <p>In this manual, <tt>$</tt> means a shell prompt, and is not a part of the input.
+
+   <p>You will see something like the following.
+<pre class="example">     $ gxpc e whoami
+     gxpc: no daemon found, create one
+     tau
+     $
+</pre>
+   <p>The <tt>gxpc e</tt> command lets GXP run whatever follows it, which is, in
+this example, <tt>whoami</tt>.  As you can see in the first line, a GXP
+&ldquo;daemon&rdquo; is brought up, which takes the request to run <tt>whoami</tt>. 
+GXP daemon stays running background.  Thus, if you issue another gxpc
+<tt>e</tt> command again, you will see result immediately this time.
+<pre class="example">     $ gxpc e whoami
+     tau
+     $ gxpc e uname
+     Linux
+     $
+</pre>
+   <p>The daemon stays running even if you exit the shell or even logout. 
+If you exit or logout and then run your shell or login again, the
+daemon should be still running.
+
+   <p><tt>gxpc quit</tt> is the command to terminate the daemon.
+<pre class="example">     $ gxpc quit
+     $
+</pre>
+   <p>Issueing gxpc <tt>e</tt> command again, the daemon will bring up again, of course.
+<pre class="example">     $ gxpc e uname
+     gxpc: no daemon found, create one
+     Linux
+</pre>
+   <p>A primitive way to check if the daemon is running is <tt>ps</tt> command. 
+For example,
+<pre class="example">     $ ps w
+       PID TTY      STAT   TIME COMMAND
+      9273 pts/1    S      0:00 /bin/bash --noediting -i
+      9446 pts/1    S      0:00 python /home/tau/proj/gxp3/gxpd.py --no_stdin --redirect_stdout --redirect_stderr
+      9486 pts/1    R      0:00 ps w
+</pre>
+   <p><tt>gxpd.py</tt> is the daemon running for you.
+
+   <p>Or you can run <tt>gxpc prompt</tt> command. 
+If no daemon is running, it does not print anything. 
+If a daemon is running, it
+prints a short string indicating its status. For example,
+<pre class="example">     $ gxpc prompt
+     [1/1/1]
+</pre>
+   <p>We will detail the meaning of these three numbers ([1/1/1]) later. 
+For now, remember <tt>gxpc prompt</tt> command as a way to check if the
+daemon is running.
+
+   <p>In general, <tt>e</tt> command will run any shell command on <i>all hosts
+selected for execution.</i> In this example, you only have one host,
+which is the local host you issued <tt>gxpc</tt> command on, and that node
+is selected. See <a href="#Getting-more-hosts-with-use_002fexplore-commands">Getting more hosts with use/explore commands</a>,
+for how to have more hosts and how to select a set of hosts for
+execution.
+
+<div class="node">
+<a name="Getting-more-hosts-with-use%2fexplore-commands"></a>
+<a name="Getting-more-hosts-with-use_002fexplore-commands"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#Introduction-to-SSH-for-GXP-Users">Introduction to SSH for GXP Users</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#Running-commands-via-e-command">Running commands via e command</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Tutorial">Tutorial</a>
+
+</div>
+
+<h3 class="section">2.3 Getting more hosts with use/explore commands</h3>
+
+<p>With GXP, you will probably want to use many hosts in parallel.  You
+need to have a host you can remote-login. In this example, we assume
+you are originally on host <tt>hongo000</tt> and you have another host,
+<tt>hongo001</tt>, which you can remote-login from <tt>hongo000</tt> via
+SSH. Furthermore, we assume you can do so without typing password
+every time you login <tt>hongo001</tt>. 
+See <a href="#Introduction-to-SSH-for-GXP-Users">Introduction to SSH for GXP Users</a>, if you are not familiar with necessary
+SSH setup to do so. For those who already know it,
+you need to have public/private
+key pairs and either (1) use <tt>ssh-agent</tt> and <tt>ssh-add</tt> (<tt>eval
+`ssh-agent` &amp;&amp; ssh-add</tt>) and input the phassphrase to <tt>ssh-add</tt>,
+so SSH does not ask you it again (recommended), or
+(2) set the encryption passphrase of the private key empty. 
+Though the method (2) uses secure public-key protocol for
+authentication, when your account on the host storing the private key
+is compromised, the intruder may be able to access other hosts
+via the private key.
+
+   <p>Either way, you should have an environment
+where something like the following silently succeeds without
+your password/passphrase being asked by SSH client.
+<pre class="example">     $ ssh hongo001 hostname
+     hongo001
+     $
+</pre>
+   <p>You may use remote-execution commands other than SSH,
+including RSH, QRSH, and QSUB as well as the local shell
+(sh) to spawn multiple daemons on a single host. 
+You can customize exact command lines used or even add
+your own custom rsh-like command in the repertoire. 
+??? Explore Settings for Various Environment,
+for details.
+
+   <p>Once you have such an environment, try the following to acquire hongo001.
+<pre class="example">     $ gxpc use ssh hongo000 hongo001
+     $ gxpc explore hongo001
+     reached : hongo001
+     $
+</pre>
+   <p>The first line reads &ldquo;<tt>gxpc</tt> [can] <tt>use</tt> <tt>ssh</tt> [from]
+<tt>hongo000</tt> [to login] <tt>hongo001</tt>.&rdquo; The second line instructs GXP to
+go ahead and really login <tt>hongo001</tt>. If <tt>hongo000</tt> and <tt>hongo001</tt>
+share your home directory, this command will not take much longer than
+the regular SSH. After the explore command has finished, issue an
+<tt>e</tt> command again. This time, you will see the command being
+executed on the two hosts.
+<pre class="example">     $ gxpc e hostname
+     hongo000
+     hongo001
+     $
+</pre>
+   <p><tt>gxpc stat</tt> command shows hosts (daemons) connected.
+<pre class="example">     $ gxpc e hostname
+     hongo000
+     hongo001
+     $
+</pre>
+   <p>If you want to grab a third host, say <tt>hongo002</tt>, try the following.
+<pre class="example">     $ gxpc use ssh hongo000 hongo002
+     $ gxpc explore hongo002
+     reached : hongo002
+     $ gxpc e hostname
+     hongo000
+     hongo001
+     hongo002
+</pre>
+   <p>You could continue this way, issueing <tt>use</tt> command and then <tt>explore</tt>
+command to get a single host at a time, but this is obviously not so
+comfortable if you have hundred hosts, say <tt>hongo000</tt> &ndash; <tt>hongo099</tt>. 
+The first trick to learn is that, both the second and the third
+arguments to <tt>use</tt> command are actually <i>regular expressions</i> of
+hostnames. Therefore, the following single line:
+<pre class="example">     $ gxpc use ssh hongo000 hongo0
+</pre>
+   <p>says that &ldquo;<tt>gxpc</tt> [can] <tt>use</tt> <tt>ssh</tt> [from any host matching]
+<tt>hongo000</tt> [to login any host matching] <tt>hongo0</tt>.&rdquo;  Note that any
+host that begins with <tt>hongo0</tt> matches the regular expression
+<tt>hongo0</tt>.
+
+   <p>Second, explore command can take multiple hostnames in a single
+command. For example, after the above command, you may grab three
+hosts with a single stroke by:
+<pre class="example">     $ gxpc explore hongo003 hongo004 hongo005
+     reached : hongo003
+     reached : hongo004
+     reached : hongo005
+     $
+</pre>
+   <p>By default, GXP won't grab the same host multiple times, so issuing
+the following once again will have no effect.
+<pre class="example">     $ gxpc explore hongo001
+     $
+</pre>
+   <p>If you have many hosts, this is still painful. An even better way
+is to use a special notation <tt>[[</tt><i>xxx</i><tt>-</tt><i>yyy</i><tt>]]</tt>, which represents
+a set of numbers between <i>xxx</i> and <i>yyy</i> (inclusive). So,
+<pre class="example">     $ gxpc explore hongo[[000-014]]
+     $
+</pre>
+   <p>is equivalent to
+<pre class="example">     $ gxpc explore hongo000 hongo001 hongo002 ... hongo014
+     $
+</pre>
+   <p>If you wish to exclude some hosts from the range, use a notation
+<tt>;</tt><i>nnn</i> or <tt>;</tt><i>nnn</i><tt>-</tt><i>mmm</i>. For example,
+<pre class="example">     $ gxpc explore hongo[[000-014;007]]
+     $
+</pre>
+   <p>will explore hongo000 ... hongo014 except for hongo007.
+<pre class="example">     $ gxpc explore hongo[[000-014;003-006]]
+     $
+</pre>
+   <p>will explore hongo000 ... hongo014 except for hongo003-hongo006.
+
+   <p>Since GXP gracefully handles (ignores) dead or non-existent hosts, you
+normally do not have to exclude every single non-working hosts this
+way, but doing so is sometimes useful to make explore faster.
+
+   <p>Instead of typing hostnames in a command line, you may have a file
+that lists targets and give it to explore command by
+<tt>&ndash;targetfile</tt> or the shorter <tt>-t</tt> option. 
+Let's say you have a file like the following.
+<pre class="example">     $ cat my_targets
+     hongo[[000-014]]
+     kashiwa[[000-009]]
+     edo[[000-012]]
+</pre>
+   <p>Then
+<pre class="example">     $ gxpc explore <tt>-t my_targets</tt>
+</pre>
+   <p>is equivalent to
+<pre class="example">     $ gxpc explore hongo[[000-014]] kashiwa[[000-009]] edo[[000-012]]
+</pre>
+   <p>Now you reached 15 hosts in total. The <tt>stat</tt> command shows
+hosts (daemons) connected.
+
+<pre class="example">     $ gxpc stat
+     /tmp/gxp-tau/gxpsession-hongo000-tau-2007-01-27-23-15-04-29004-97439271
+     hongo000 (= hongo000-tau-2007-01-27-23-15-04-29004)
+      hongo007 (= hongo007-tau-2007-01-27-23-16-30-24842)
+      hongo001 (= hongo001-tau-2007-01-27-23-16-27-1205)
+      hongo013 (= hongo013-tau-2007-01-27-23-48-28-20179)
+      hongo014 (= hongo014-tau-2007-01-27-23-48-14-11435)
+      hongo005 (= hongo005-tau-2007-01-27-23-16-30-9412)
+      hongo006 (= hongo006-tau-2007-01-27-23-16-28-24083)
+      hongo003 (= hongo003-tau-2007-01-27-23-16-29-16040)
+      hongo002 (= hongo002-tau-2007-01-27-23-16-28-22077)
+      hongo008 (= hongo008-tau-2007-01-27-23-48-12-4070)
+      hongo012 (= hongo012-tau-2007-01-27-23-48-14-32519)
+      hongo010 (= hongo010-tau-2007-01-27-23-48-14-12066)
+      hongo011 (= hongo011-tau-2007-01-27-23-48-15-15126)
+      hongo009 (= hongo009-tau-2007-01-27-23-48-13-21582)
+      hongo004 (= hongo004-tau-2007-01-27-23-16-31-8776)
+     $
+</pre>
+   <p>The first line shows the name of <i>a session file</i>, which is
+explained later (??).  Below
+<tt>hongo000</tt>, <tt>hongo001</tt>&ndash;<tt>hongo014</tt> are indented by a single space,
+which means <tt>hongo000</tt> issued logins to all these hosts. This
+happened because we have previously said
+<pre class="example">     $ gxpc use ssh hongo000 hongo0
+</pre>
+   <p>indicating that (only) <tt>hongo000</tt> can login <tt>hongo0</tt>.
+
+   <p>You can alternatively say
+<pre class="example">     $ gxpc use ssh hongo0 hongo0
+</pre>
+   <p>indicating gxpc can use <tt>ssh</tt> from <tt>any</tt> host matching <tt>hongo0</tt>
+to any host matching <tt>hongo0</tt>. This can be abbreviated to:
+<pre class="example">     $ gxpc use ssh hongo0
+</pre>
+   <p>In this case, <tt>gxpc</tt> will try to reach these hosts in a more
+load-balanced fashion. To see this let's quit and
+try it again from the beginning.
+
+<pre class="example">     $ gxpc quit
+     $ gxpc use ssh hongo0
+     gxpc: no daemon found, create one
+     $ gxpc explore -h /etc/hosts hongo00 hongo01[0-4]
+     reached : hongo003
+     reached : hongo008
+     reached : hongo001
+     reached : hongo004
+     reached : hongo002
+     reached : hongo005
+     reached : hongo007
+     reached : hongo006
+     reached : hongo009
+     reached : hongo013
+     reached : hongo010
+     reached : hongo011
+     reached : hongo012
+     reached : hongo014
+     $ gxpc stat
+     /tmp/gxp-tau/gxpsession-hongo000-tau-2007-01-28-00-10-51-311-66768183
+     hongo000 (= hongo000-tau-2007-01-28-00-10-51-311)
+      hongo006 (= hongo006-tau-2007-01-28-00-10-33-29696)
+      hongo005 (= hongo005-tau-2007-01-28-00-10-35-13470)
+      hongo003 (= hongo003-tau-2007-01-28-00-10-34-16875)
+      hongo002 (= hongo002-tau-2007-01-28-00-10-33-27494)
+      hongo004 (= hongo004-tau-2007-01-28-00-10-36-9479)
+      hongo009 (= hongo009-tau-2007-01-28-00-10-33-21614)
+      hongo008 (= hongo008-tau-2007-01-28-00-10-31-4102)
+       hongo011 (= hongo011-tau-2007-01-28-00-10-34-15158)
+       hongo012 (= hongo012-tau-2007-01-28-00-10-33-32551)
+       hongo010 (= hongo010-tau-2007-01-28-00-10-33-12098)
+       hongo013 (= hongo015-tau-2007-01-28-00-10-34-20211)
+       hongo014 (= hongo014-tau-2007-01-28-00-10-34-11467)
+      hongo007 (= hongo007-tau-2007-01-28-00-10-35-26002)
+      hongo001 (= hongo001-tau-2007-01-28-00-10-32-1979)
+</pre>
+   <p>The indentations indicate that <tt>hongo008</tt> issued logins to
+<tt>hongo010</tt>&ndash;<tt>hongo014</tt>. <tt>hongo000</tt> issued logins to <tt>hongo001</tt>
+&ndash;<tt>hongo009</tt>. In general, GXP daemons will form a tree.  By default,
+a single node tries to keep the number of its children no more than
+nine.
+
+<div class="node">
+<a name="Introduction-to-SSH-for-GXP-Users"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#Quick-Reference-of-Frequently-Used-Commands">Quick Reference of Frequently Used Commands</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#Getting-more-hosts-with-use_002fexplore-commands">Getting more hosts with use/explore commands</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Tutorial">Tutorial</a>
+
+</div>
+
+<h3 class="section">2.4 Introduction to SSH for GXP Users</h3>
+
+<p>todo
+
+<div class="node">
+<a name="Quick-Reference-of-Frequently-Used-Commands"></a>
+<p><hr>
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#Introduction-to-SSH-for-GXP-Users">Introduction to SSH for GXP Users</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Tutorial">Tutorial</a>
+
+</div>
+
+<h3 class="section">2.5 Quick Reference of Frequently Used Commands</h3>
+
+     <ul>
+<li>
+     <pre class="example">          <tt>gxpc prompt</tt>
+</pre>
+     <p>will show a succinct summary of gxp status.  It is strongly
+recommended to put `gxpc prompt 2&gt; /dev/null`
+(note for the backquotes, not regular
+quotes) as part of your shell prompt. For example, if you are a bash
+user, put the following into your .bashrc.
+     <pre class="example">          export PS1='\h:\W`gxpc prompt 2&gt; /dev/null`% '
+</pre>
+     <p>Then you will always see the succinct summary in your shell prompt. e.g.,
+     <pre class="example">          $ export PS1='\h:\W`gxpc prompt 2&gt; /dev/null`% '
+          $ gxpc
+          hongo:tmp[1/1/1]%
+</pre>
+     <p>'2&gt; /dev/null' is to make gxpc silently exit if should be there any
+error.
+
+     <li>
+     <pre class="example">          <tt>gxpc use</tt> <i>rsh-name</i> <i>src</i> <i>target</i>
+</pre>
+     <p>tells gxp it can login
+from <i>src</i> to <i>target</i> via <i>rsh-name</i>.
+
+     <li>
+     <pre class="example">          <tt>gxpc explore</tt> <i>target</i> ...
+</pre>
+     <p>attempts to login specified <i>target</i>'s by methods specified by <tt>use</tt>
+commands. 
+There is a convenient notation to represent a set of targets. e.g.,
+     <pre class="example">          $ gxpc explore hongo[[000-012]]
+</pre>
+     <p>is equivalent to
+     <pre class="example">          $ gxpc explore hongo000 hongo001 hongo002 ... hongo012
+</pre>
+     <li>
+     <pre class="example">          <tt>gxpc e</tt> <i>whatever</i>
+</pre>
+     <p>will run a shell command <i>whatever</i> on
+all selected hosts. e.g.,
+
+     <li>
+     <pre class="example">          <tt>gxpc cd</tt> <i>[directory]</i>
+</pre>
+     <p>will change the current directory of all selected hosts.
+
+     <li>
+     <pre class="example">          <tt>gxpc export</tt> <i>VAR=VAL</i>
+</pre>
+     <p>will set the environment variable for seqsequent commands.
+
+     <li>
+     <pre class="example">          <tt>gxpc smask</tt>
+</pre>
+     <p>will select the hosts on which the last command succeeded
+for the execution targets of subsequent commands.
+
+     <li>
+     <pre class="example">          <tt>gxpc rmask</tt>
+</pre>
+     <p>will reset the selected hosts to all hosts.
+
+     <li>
+     <pre class="example">          <tt>gxpc savemask</tt> <i>name</i>
+</pre>
+     <p>is similar to smask, but it remembers the set of selected hosts
+for future reference (by <tt>-m</tt> option of <tt>gxpc e</tt> commands).
+
+     <li>
+     <pre class="example">          <tt>gxpc e</tt> -m <i>name</i> <i>whatever</i>
+</pre>
+     <p>is similar to <tt>gxpc e</tt> <i>whatever</i>, but runs <i>whatever</i> on
+hosts that have been set by <i>name</i> by <tt>gxpc savemask</tt> <i>name</i>.
+
+     <li>
+     <pre class="example">          <tt>gxpc -m</tt> <i>name</i> <tt>cd</tt> <i>[directory]</i>
+          <tt>gxpc -m</tt> <i>name</i> <tt>export</tt> <i>VAR=VAL</i>
+          <tt>gxpc -m</tt> <i>name</i> <tt>e</tt> <i>whatever</i>
+</pre>
+     <p><tt>-m</tt> can actually be written immediately after <tt>gxpc</tt>.
+
+     <li>
+     <pre class="example">          <tt>gxpc e</tt> -h <i>hostname</i> <i>whatever</i>
+</pre>
+     <p>is similar to <tt>gxpc e</tt> <i>whatever</i>, but runs <i>whatever</i> on
+hosts whose names match regular expression <i>hostname</i>.
+
+     <li>
+     <pre class="example">          <tt>gxpc e</tt> -H <i>hostname</i> <i>whatever</i>
+</pre>
+     <p>is similar to <tt>gxpc e</tt> <i>whatever</i>, but runs <i>whatever</i> on
+hosts whose names do not match regular expression <i>hostname</i>.
+
+     <li>
+     <pre class="example">          <tt>gxpc -h</tt> <i>name</i> <tt>cd</tt> <i>[directory]</i>
+          <tt>gxpc -h</tt> <i>name</i> <tt>export</tt> <i>VAR=VAL</i>
+          <tt>gxpc -h</tt> <i>name</i> <tt>e</tt> <i>whatever</i>
+          <tt>gxpc -H</tt> <i>name</i> <tt>cd</tt> <i>[directory]</i>
+          <tt>gxpc -H</tt> <i>name</i> <tt>export</tt> <i>VAR=VAL</i>
+          <tt>gxpc -H</tt> <i>name</i> <tt>e</tt> <i>whatever</i>
+</pre>
+     <p>Both <tt>-h</tt> and <tt>-H</tt> can actually be written immediately after <tt>gxpc</tt>.
+
+     <li>
+     <pre class="example">          alias e='gxpc e'
+          alias smask='gxpc smask'
+          ...
+</pre>
+     <p>Finally, it is recommended to put aliases to some frequently used
+commands into your shell startup files, so that you do not need to
+type 'gxpc' everytime.
+
+</ul>
+
+<div class="node">
+<a name="Using-GXP-make-for-Parallel-Processing"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#GXP-internals">GXP internals</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#Tutorial">Tutorial</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Top">Top</a>
+
+</div>
+
+<h2 class="chapter">3 Using GXP make for Parallel Processing</h2>
+
+<ul class="menu">
+<li><a accesskey="1" href="#GXP-make">GXP make</a>
+</ul>
+
+<div class="node">
+<a name="GXP-make"></a>
+<p><hr>
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#Using-GXP-make-for-Parallel-Processing">Using GXP make for Parallel Processing</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Using-GXP-make-for-Parallel-Processing">Using GXP make for Parallel Processing</a>
+
+</div>
+
+<h3 class="section">3.1 GXP make</h3>
+
+<div class="node">
+<a name="GXP-internals"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#Command-Reference">Command Reference</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#Using-GXP-make-for-Parallel-Processing">Using GXP make for Parallel Processing</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Top">Top</a>
+
+</div>
+
+<h2 class="chapter">4 GXP internals</h2>
+
+<ul class="menu">
+<li><a accesskey="1" href="#Files">Files</a>
+</ul>
+
+<div class="node">
+<a name="Files"></a>
+<p><hr>
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#GXP-internals">GXP internals</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#GXP-internals">GXP internals</a>
+
+</div>
+
+<h3 class="section">4.1 Files</h3>
+
+<p>There are the following files in the toplevel directory.  This is a bit
+messy and I like to make it cleaner some day.
+
+     <ul>
+<li>ioman.py : main event handler
+<li>gxpm.py : definition of messages among gxpc and gxpd
+<li>gxpd.py : GXP daemon main program
+<li>gxpc.py : gxpc command main program
+<li>expectd.py : implements explore command
+<li>inst_remote_stub.py : implements explore command
+<li>inst_remote.py : implements explore command
+<li>inst_local.py : implements explore command
+<li>opt.py : a small utility defining command line options
+<li>ifconfig.py : a small utility giving ifconfig-like function
+<li>this_file.py : a small utility giving path name of the program
+<li>gxp_js.py : implements js command
+</ul>
+
+<div class="node">
+<a name="Command-Reference"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#Tools-Reference">Tools Reference</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#GXP-internals">GXP internals</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Top">Top</a>
+
+</div>
+
+<h2 class="chapter">5 Command Reference</h2>
+
+<ul class="menu">
+<li><a accesskey="1" href="#cd">cd</a>
+<li><a accesskey="2" href="#e">e</a>
+<li><a accesskey="3" href="#ep">ep</a>
+<li><a accesskey="4" href="#explore">explore</a>
+<li><a accesskey="5" href="#export">export</a>
+<li><a accesskey="6" href="#help">help</a>
+<li><a accesskey="7" href="#i">i</a>
+<li><a accesskey="8" href="#js">js</a>
+<li><a accesskey="9" href="#log_005flevel">log_level</a>
+<li><a href="#make2">make2</a>
+<li><a href="#make">make</a>
+<li><a href="#makectl">makectl</a>
+<li><a href="#makeman">makeman</a>
+<li><a href="#mapred">mapred</a>
+<li><a href="#ping">ping</a>
+<li><a href="#popmask">popmask</a>
+<li><a href="#pp">pp</a>
+<li><a href="#prof_005fstart">prof_start</a>
+<li><a href="#smask">smask</a>
+<li><a href="#quit">quit</a>
+<li><a href="#reclaim">reclaim</a>
+<li><a href="#restoremask">restoremask</a>
+<li><a href="#rmask">rmask</a>
+<li><a href="#rsh">rsh</a>
+<li><a href="#set_005fmax_005fbuf_005flen">set_max_buf_len</a>
+<li><a href="#show_005fexplore">show_explore</a>
+<li><a href="#showmasks">showmasks</a>
+<li><a href="#stat">stat</a>
+<li><a href="#trim">trim</a>
+<li><a href="#use">use</a>
+<li><a href="#version">version</a>
+<li><a href="#vgxp">vgxp</a>
+</ul>
+
+<div class="node">
+<a name="cd"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#e">e</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#Command-Reference">Command Reference</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Command-Reference">Command Reference</a>
+
+</div>
+
+<h3 class="section">5.1 cd</h3>
+
+<p><b>Usage:</b>
+<pre class="example">     
+       <tt>gxpc</tt> <tt>cd</tt> [<var>OPTIONS</var> ...] <var>DIRECTORY</var>
+     
+</pre>
+   <p><b>Description:</b>
+
+   <p>Set current directory of the selected nodes to <var>DIRECTORY</var>. 
+Subsequent commands will start at the specified directory. 
+Options are the same as those of `<tt>e</tt>' command.
+
+<div class="node">
+<a name="e"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#ep">ep</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#cd">cd</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Command-Reference">Command Reference</a>
+
+</div>
+
+<h3 class="section">5.2 e, mw</h3>
+
+<p><b>Usage:</b>
+<pre class="example">     
+       <tt>gxpc</tt> <tt>e</tt>  [<var>OPTION</var> ...] <var>CMD</var>
+       <tt>gxpc</tt> <tt>mw</tt> [<var>OPTION</var> ...] <var>CMD</var>
+       <tt>gxpc</tt> <tt>ep</tt> [<var>OPTION</var> ...] <var>FILE</var>
+     
+</pre>
+   <p><b>Description:</b>
+
+   <p>Execute the command on the selected nodes.
+
+   <p><b>Options: </b>
+     <dl>
+(for <tt>mw</tt> only):
+<dt><tt>--master</tt><code> 'command'</code><dd>    equivalent to <tt>e</tt> <tt>&ndash;updown</tt> '3:4:command' ... 
+  if <tt>&ndash;master</tt> is not given, it is equivalent to <tt>e</tt> <tt>&ndash;updown</tt> 3:4 ...
+
+   </dl>
+
+   <p><b>Options: </b>
+     <dl>
+(for <tt>e</tt>, <tt>mw</tt>, and <tt>ep</tt>):
+<dt><tt>--withmask</tt><code>,</code><tt>-m</tt> <var>MASK</var><dd>    execute on a set of nodes saved by <tt>savemask</tt> or <tt>pushmask</tt>
+<br><dt><tt>--withhostmask</tt><code>,</code><tt>-h</tt> <var>HOSTMASK</var><dd>    execute on a set of nodes whose hostnames match regexp <var>HOSTMASK</var>
+<br><dt><tt>--withhostnegmask</tt><code>,-H </code><var>HOSTMASK</var><dd>    execute on a set of nodes whose hostnames do not match regexp <var>HOSTMASK</var>
+<br><dt><tt>--withgupidmask</tt><code>,-g </code><var>HOSTMASK</var><dd>    execute on a set of nodes whose gupid (shown by <tt>gxpc</tt> <tt>stat</tt>)
+    match regexp <var>HOSTMASK</var>
+<br><dt><tt>--withgupidnegmask</tt><code>,-G </code><var>HOSTMASK</var><dd>    execute on a set of nodes whose gupid (shown by <tt>gxpc</tt> <tt>stat</tt>)
+    do not match regexp <var>HOSTMASK</var>
+<br><dt><tt>--withtargetmask</tt><code>,</code><tt>-t</tt> <var>HOSTMASK</var><dd>    execute on a set of nodes whose target name (shown by <tt>gxpc</tt> <tt>stat</tt>)
+    match regexp <var>HOSTMASK</var>
+<br><dt><tt>--withtargetnegmask</tt><code>,-T </code><var>HOSTMASK</var><dd>    execute on a set of nodes whose target name (shown by <tt>gxpc</tt> <tt>stat</tt>)
+    do not match regexp <var>HOSTMASK</var>
+<br><dt><tt>--up</tt><code> FD0[:</code><var>FD1</var><code>]</code><dd>    collect output from <var>FD0</var> of <var>CMD</var>, and output them to <var>FD1</var> of <tt>gxpc</tt>. 
+    if :<var>FD1</var> is omitted, it is treated as if <var>FD1</var> == <var>FD0</var>
+<br><dt><tt>--down</tt><code> FD0[:</code><var>FD1</var><code>]</code><dd>    broadcast input to <var>FD0</var> of <tt>gxpc</tt> to <var>FD1</var> of <var>CMD</var>. 
+    if :<var>FD1</var> is omitted, it is treated as if <var>FD1</var> == <var>FD0</var>
+<br><dt><tt>--updown</tt> <var>FD1</var><code>:FD2[:</code><var>MASTER</var><code>]</code><dd>    if :<var>MASTER</var> is omitted, collect output from <var>FD1</var> of <var>CMD</var>,
+    and broadcast them to <var>FD2</var> of <var>CMD</var>. 
+    if :<var>MASTER</var> is given, run <var>MASTER</var> on the local host, collect
+    output from <var>FD1</var> of <var>CMD</var>, feed them to stdin of the <var>MASTER</var>. 
+    broadcast stdout of the <var>MASTER</var> to <var>FD1</var> of <var>CMD</var>. 
+<br><dt><tt>--pty</tt><dd>    assign pseudo tty for stdin/stdout/stderr of <var>CMD</var>
+<br><dt><tt>--rlimit</tt><code> rlimit_xxx:soft[:hard]</code><dd>    apply setrlimit(rlimit_xxx, soft, hard)
+
+   </dl>
+
+   <p>By default,
+
+     <ul>
+<li>stdin of <tt>gxpc</tt> are broadcast to stdin of <var>CMD</var>
+<li>stdout of <var>CMD</var> are output to stdout of <tt>gxpc</tt>
+<li>stderr of <var>CMD</var> are output to stderr of <tt>gxpc</tt>
+
+   </ul>
+
+   <p>This is as if `<tt>&ndash;down</tt> 0 <tt>&ndash;up</tt> 1 <tt>&ndash;up</tt> 2' are specified.  In this
+case, stdout/stderr are block-buffered by default.  You may need
+to do setbuf in your program or flush stdout/err, to display
+<var>CMD</var>'s output without delay.  <tt>&ndash;pty</tt> overwrites this and turn them
+to line-buffered (by default).  both stdout/err of <var>CMD</var> now goto
+stdout of <tt>gxpc</tt> (they are merged).  <var>CMD</var>'s stdout/err should appear
+as soon as they are newlined.
+
+   <p><b>See Also:</b>
+<pre class="example">     
+       <tt>smask</tt> <tt>savemask</tt> <tt>pushmask</tt> <tt>rmask</tt> <tt>restoremask</tt> <tt>popmask</tt>
+     
+</pre>
+   <div class="node">
+<a name="ep"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#explore">explore</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#e">e</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Command-Reference">Command Reference</a>
+
+</div>
+
+<h3 class="section">5.3 ep</h3>
+
+<p><b>Usage:</b>
+<pre class="example">     
+       <tt>gxpc</tt> <tt>e</tt>  [<var>OPTION</var> ...] <var>CMD</var>
+       <tt>gxpc</tt> <tt>mw</tt> [<var>OPTION</var> ...] <var>CMD</var>
+       <tt>gxpc</tt> <tt>ep</tt> [<var>OPTION</var> ...] <var>FILE</var>
+     
+</pre>
+   <p><b>Description:</b>
+
+   <p>Execute the command on the selected nodes.
+
+   <p><b>Options: </b>
+     <dl>
+(for <tt>mw</tt> only):
+<dt><tt>--master</tt><code> 'command'</code><dd>    equivalent to <tt>e</tt> <tt>&ndash;updown</tt> '3:4:command' ... 
+  if <tt>&ndash;master</tt> is not given, it is equivalent to <tt>e</tt> <tt>&ndash;updown</tt> 3:4 ...
+
+   </dl>
+
+   <p><b>Options: </b>
+     <dl>
+(for <tt>e</tt>, <tt>mw</tt>, and <tt>ep</tt>):
+<dt><tt>--withmask</tt><code>,</code><tt>-m</tt> <var>MASK</var><dd>    execute on a set of nodes saved by <tt>savemask</tt> or <tt>pushmask</tt>
+<br><dt><tt>--withhostmask</tt><code>,</code><tt>-h</tt> <var>HOSTMASK</var><dd>    execute on a set of nodes whose hostnames match regexp <var>HOSTMASK</var>
+<br><dt><tt>--withhostnegmask</tt><code>,-H </code><var>HOSTMASK</var><dd>    execute on a set of nodes whose hostnames do not match regexp <var>HOSTMASK</var>
+<br><dt><tt>--withgupidmask</tt><code>,-g </code><var>HOSTMASK</var><dd>    execute on a set of nodes whose gupid (shown by <tt>gxpc</tt> <tt>stat</tt>)
+    match regexp <var>HOSTMASK</var>
+<br><dt><tt>--withgupidnegmask</tt><code>,-G </code><var>HOSTMASK</var><dd>    execute on a set of nodes whose gupid (shown by <tt>gxpc</tt> <tt>stat</tt>)
+    do not match regexp <var>HOSTMASK</var>
+<br><dt><tt>--withtargetmask</tt><code>,</code><tt>-t</tt> <var>HOSTMASK</var><dd>    execute on a set of nodes whose target name (shown by <tt>gxpc</tt> <tt>stat</tt>)
+    match regexp <var>HOSTMASK</var>
+<br><dt><tt>--withtargetnegmask</tt><code>,-T </code><var>HOSTMASK</var><dd>    execute on a set of nodes whose target name (shown by <tt>gxpc</tt> <tt>stat</tt>)
+    do not match regexp <var>HOSTMASK</var>
+<br><dt><tt>--up</tt><code> FD0[:</code><var>FD1</var><code>]</code><dd>    collect output from <var>FD0</var> of <var>CMD</var>, and output them to <var>FD1</var> of <tt>gxpc</tt>. 
+    if :<var>FD1</var> is omitted, it is treated as if <var>FD1</var> == <var>FD0</var>
+<br><dt><tt>--down</tt><code> FD0[:</code><var>FD1</var><code>]</code><dd>    broadcast input to <var>FD0</var> of <tt>gxpc</tt> to <var>FD1</var> of <var>CMD</var>. 
+    if :<var>FD1</var> is omitted, it is treated as if <var>FD1</var> == <var>FD0</var>
+<br><dt><tt>--updown</tt> <var>FD1</var><code>:FD2[:</code><var>MASTER</var><code>]</code><dd>    if :<var>MASTER</var> is omitted, collect output from <var>FD1</var> of <var>CMD</var>,
+    and broadcast them to <var>FD2</var> of <var>CMD</var>. 
+    if :<var>MASTER</var> is given, run <var>MASTER</var> on the local host, collect
+    output from <var>FD1</var> of <var>CMD</var>, feed them to stdin of the <var>MASTER</var>. 
+    broadcast stdout of the <var>MASTER</var> to <var>FD1</var> of <var>CMD</var>. 
+<br><dt><tt>--pty</tt><dd>    assign pseudo tty for stdin/stdout/stderr of <var>CMD</var>
+<br><dt><tt>--rlimit</tt><code> rlimit_xxx:soft[:hard]</code><dd>    apply setrlimit(rlimit_xxx, soft, hard)
+
+   </dl>
+
+   <p>By default,
+
+     <ul>
+<li>stdin of <tt>gxpc</tt> are broadcast to stdin of <var>CMD</var>
+<li>stdout of <var>CMD</var> are output to stdout of <tt>gxpc</tt>
+<li>stderr of <var>CMD</var> are output to stderr of <tt>gxpc</tt>
+
+   </ul>
+
+   <p>This is as if `<tt>&ndash;down</tt> 0 <tt>&ndash;up</tt> 1 <tt>&ndash;up</tt> 2' are specified.  In this
+case, stdout/stderr are block-buffered by default.  You may need
+to do setbuf in your program or flush stdout/err, to display
+<var>CMD</var>'s output without delay.  <tt>&ndash;pty</tt> overwrites this and turn them
+to line-buffered (by default).  both stdout/err of <var>CMD</var> now goto
+stdout of <tt>gxpc</tt> (they are merged).  <var>CMD</var>'s stdout/err should appear
+as soon as they are newlined.
+
+   <p><b>See Also:</b>
+<pre class="example">     
+       <tt>smask</tt> <tt>savemask</tt> <tt>pushmask</tt> <tt>rmask</tt> <tt>restoremask</tt> <tt>popmask</tt>
+     
+</pre>
+   <div class="node">
+<a name="explore"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#export">export</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#ep">ep</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Command-Reference">Command Reference</a>
+
+</div>
+
+<h3 class="section">5.4 explore</h3>
+
+<p><b>Usage:</b>
+<pre class="example">     
+       <tt>gxpc</tt> <tt>explore</tt> [<var>OPTIONS</var>] <var>TARGET</var> <var>TARGET</var> ...
+     
+</pre>
+   <p><b>Description:</b>
+
+   <p>Login target hosts specified by <var>OPTIONS</var> and <var>TARGET</var>.
+
+   <p><b>Options:</b>
+     <dl>
+<dt><tt>--dry</tt><dd>    dryrun. only show target hosts
+<br><dt><tt>--hostfile</tt><code>,</code><tt>-h</tt> <var>HOSTS_FILE</var><dd>    give known hosts by file
+<br><dt><tt>--hostcmd</tt> <var>HOSTS_CMD</var><dd>    give known hosts by command output
+<br><dt><tt>--targetfile</tt><code>,</code><tt>-t</tt> <var>TARGETS_FILE</var><dd>    give target hosts by file
+<br><dt><tt>--targetcmd</tt> <var>TARGETS_CMD</var><dd>    give target hosts by command output
+<br><dt><tt>--timeout</tt> <var>SECONDS</var><dd>    specify the time to wait for a remote host's response
+    until gxp considers it dead
+<br><dt><tt>--children_soft_limit</tt> <var>N</var><code> (&gt;= 2)</code><dd>    control the shape of the <tt>explore</tt> tree. if this value is <var>N</var>, <tt>gxpc</tt>
+    tries to keep the number of children of a single host no more than <var>N</var>,
+    unless it is absolutely necessary to reach requested nodes. 
+<br><dt><tt>--children_hard_limit</tt> <var>N</var><dd>    control the shape of the <tt>explore</tt> tree. if this value is <var>N</var>, <tt>gxpc</tt>
+    keeps the number of children of a single host no more than <var>N</var>, in any event. 
+<br><dt><tt>--target_prefix</tt> <var>PATH</var><dd>    specify the directory in remote hosts in which gxp files are installed. 
+    default is ~/.gxp_tmp, meaning a temporary directory like
+    ~/.gxp_tmp/RANDOM_NAME/gxp3 will be created and all files are installed
+    there. automatically created if it does not exist. <tt>use</tt> <tt>e</tt>.g., /tmp/YOUR_NAME
+    or something if you have ridicuously slow home directory. 
+<br><dt><tt>--verbosity</tt> <var>N</var><code> (0 &lt;= </code><var>N</var><code> &lt;= 2)</code><dd>    set verbosity level (the larger the more verbose)
+<br><dt><tt>--set_default</tt><dd>    if you set this option, options specified in this <tt>explore</tt> becomes the default. 
+    for example, if you say <tt>&ndash;timeout</tt> 20.0 and <tt>&ndash;set_default</tt>, timeout is set to
+    20.0 in subsequent explores, even if you do not specify <tt>&ndash;timeout</tt>. 
+<br><dt><tt>--reset_default</tt><dd>    reset the default values set by <tt>&ndash;set_default</tt>. 
+<br><dt><tt>--show_settings</tt><dd>    show effective <tt>explore</tt> options, considering those given by command line and
+    those specified as default values.
+
+   </dl>
+
+   <p>Execution of an <tt>explore</tt> command will conceptually consist of the
+following three steps.
+
+   <p>(1) Known Hosts: Know names of existing hosts, either by
+<tt>&ndash;hostfile</tt>, <tt>&ndash;hostcmd</tt>, or a default rule. These are called
+'known hosts.' <tt>-h</tt> is an acronym of <tt>&ndash;hostfile</tt>.
+
+   <p>(2) Targets: Extract login targets from known hosts. They are
+extracted by regular expressions given either by <tt>&ndash;targetfile</tt>,
+<tt>&ndash;targetcmd</tt>, or directly by command line arguments. <tt>-t</tt> is
+an acronym of <tt>&ndash;targetfile</tt>.
+
+   <p>(3) <tt>gxpc</tt> will attempt to login these targets according to the
+rules specified by `<tt>use</tt>' commands.
+
+   <p>Known hosts are specified by a file using <tt>&ndash;hostfile</tt> option, or
+by output of a command using <tt>&ndash;hostcmd</tt>. Formats of the two are
+common and very simple. In the simplest format, a single file
+contains a single hostname. For example,
+
+<pre class="example">     
+        hongo001
+        hongo002
+        hongo004
+        hongo005
+        hongo006
+        hongo007
+        hongo008
+     
+</pre>
+   <p>is a valid <var>HOSTS_FILE</var>. If you specify a command that outputs
+a list of files in the above format, the effect is the same
+as giving a file having the list by <tt>&ndash;hostfile</tt>. For example,
+
+<pre class="example">     
+       <tt>--hostcmd</tt> 'for <tt>i</tt> in `seq 1 8` ; do printf "%03d\n" $i ; done'
+     
+</pre>
+   <p>has the same effect as giving the above file to <tt>&ndash;hostfile</tt>.
+
+   <p>The format of a <var>HOSTS_FILE</var> is actually a so-called <tt>/etc/hosts</tt>
+format, each line of which may contain several aliases of the
+same host, as well as their <var>IP</var> address. <tt>gxpc</tt> simply regards them
+as aliases of a single host, wihtout giving any significance to
+which columns they are in. Anything after `#' on each line is a
+comment and ignored. Lines not containning any name, such as
+empty lines, are also ignored.  The above simple format is
+obviously a special case of this.
+
+   <p>It is sometimes convenient to specify <tt>/etc/hosts</tt> as an argument
+to <tt>&ndash;hostfile</tt> or to specify `ypcat hosts' as an argument to
+<tt>&ndash;hostcmd</tt>. As a matter of fact, if you do not specify any of
+<tt>&ndash;hostfile</tt>, <tt>&ndash;hostcmd</tt>, <tt>&ndash;targetfile</tt>, and <tt>&ndash;targetcmd</tt>, it is
+treated as if <tt>&ndash;hostfile</tt> <tt>/etc/hosts</tt> is given.
+
+   <p>Login targets are specified by a file using <tt>&ndash;targetfile</tt> option,
+<tt>&ndash;targetcmd</tt> option, or by directly listing targets in the command
+line. Format of them are common and only slightly different from
+<var>HOSTS_FILE</var>.  The format of the list of targets in the command
+line is as follows.
+
+<pre class="example">     
+        <var>TARGET_REGEXP</var> [<var>N</var>] <var>TARGET_REGEXP</var> [<var>N</var>] <var>TARGET_REGEXP</var> [<var>N</var>] ...
+     
+</pre>
+   <p>where <var>N</var> is an integer and <var>TARGET_REGEXP</var> is any string that cannot
+be parsed as an integer. That is, it is a list of regular
+expressions, each item of which may optionally be followed by an
+integer. The integer indicates how many logins should occur to
+the target matching <var>TARGET_REGEXP</var>. The following is a valid
+command line.
+
+<pre class="example">     
+       <tt>gxpc</tt> <tt>explore</tt> <tt>-h</tt> hosts_file hongo00
+     
+</pre>
+   <p>which says you want to target all hosts beginning with hongo00,
+among all hosts listed in hosts_file.  If, for example, you have
+specified by `<tt>use</tt>' command that the local host can login these
+hosts by ssh, you will reach hosts whose names begin with
+hongo00.  If you instead say
+
+<pre class="example">     
+       <tt>gxpc</tt> <tt>explore</tt> <tt>-h</tt> hosts_file hongo00 2
+     
+</pre>
+   <p>you will get two processes on each of these hosts.
+
+   <p>If you do not give any of <tt>&ndash;targetfile</tt>, <tt>&ndash;targetcmd</tt>, and command
+line targets, it is treated as if a regular expression mathing
+any string is given as the command line target. That is, all
+known hosts are targets.
+
+   <p>Format of targets_host is simply a list of lines each of which
+is like the list of arguments just explained above. Thus, the
+following is a valid <var>TARGETS_FILE</var>.
+
+<pre class="example">     
+       hongo00 2
+       chiba0
+       istbs
+       sheep
+     
+</pre>
+   <p>which says you want to get two processes on each host beginning
+with hongo00 and one process on each host beginning with chiba0,
+istbs, or sheep. Just to illustrate the syntax, the same thing
+can be alternatively written with different arrangement into
+lines.
+
+<pre class="example">     
+       hongo00 2 chiba0
+       istbs sheep
+     
+</pre>
+   <p>Similar to hosts_file, you may instead specify a command line
+producing the output conforming to the format of <var>TARGETS_FILE</var>.
+
+   <p>We have so far explained that target_regexp is matched against a
+pool of known hosts to generate the actual list of targets. 
+There is an exception to this. If <var>TARGET_REGEXP</var> does not match
+any host in the pool of known hosts, it is treated as if the
+<var>TARGET_REGEXP</var> is itself a known host. Thus,
+
+<pre class="example">     
+       <tt>gxpc</tt> <tt>explore</tt> hongo000 hongo001
+     
+</pre>
+   <p>will login hongo000 and hongo001, because neither hosts_file nor
+hosts_cmd hosts are given so these expressions obviously won't
+match any known host. Using this rule, you may have a file that
+explicitly lists all hosts and solely <tt>use</tt> it to specify targets
+without using separate <var>HOSTS_FILE</var>. For example, if you have a
+long <var>TARGETS_FILE</var> called targets like:
+
+<pre class="example">     
+       abc000
+       abc001
+         ...
+       abc099
+       def000
+       def001
+         ...
+       def049
+       pqr000
+       pqr001
+         ...
+       pqr149
+     
+</pre>
+   <p>and say
+
+<pre class="example">     
+       <tt>gxpc</tt> <tt>explore</tt> <tt>-t</tt> targets
+     
+</pre>
+   <p>you say you want to get these 300 targets using whatever methods
+you specified by `<tt>use</tt>' commands.
+
+   <p>Unlike <var>HOSTS_FILE</var>, an empty line in <var>TARGETS_FILE</var> is treated as if
+it is the end of file. By inserting an empty line, you can easily
+let <tt>gxpc</tt> ignore the rest of the file. This rule is sometimes
+convenient when targeting a small number of hosts within a
+<var>TARGETS_FILE</var>.
+
+   <p>Here are some examples.
+
+   <p>1.
+
+<pre class="example">     
+       <tt>gxpc</tt> <tt>explore</tt> <tt>-h</tt> hosts_file chiba hongo
+     
+</pre>
+   <p>Hosts beginning with chiba or hongo in hosts_file
+become the targets.
+
+   <p>2.
+
+<pre class="example">     
+       <tt>gxpc</tt> <tt>explore</tt> <tt>-h</tt> hosts_file <tt>-t</tt> targets_file
+     
+</pre>
+   <p>Hosts matching any regular expression in targets_file become
+the targets.
+
+   <p>3.
+
+<pre class="example">     
+       <tt>gxpc</tt> <tt>explore</tt> <tt>-h</tt> hosts_file
+     
+</pre>
+   <p>All hosts in hosts_file become the targets.  Equivalent to `<tt>gxpc</tt>
+<tt>explore</tt> <tt>-h</tt> hosts_file .'  (`.' is a regular expression mathing
+any non-empty string).
+
+   <p>4.
+
+<pre class="example">     
+       <tt>gxpc</tt> <tt>explore</tt> <tt>-t</tt> targets_file
+     
+</pre>
+   <p>All hosts in targetfile become the targets. This is simiar to the
+previous case, but the file format is different.  Note that in
+this case, strings in targets_file won't be matched against
+anything, so they should be literal target names.
+
+   <p>5.
+
+<pre class="example">     
+       <tt>gxpc</tt> <tt>explore</tt> chiba000 chiba001 chiba002 chiba003
+     
+</pre>
+   <p>chiba000, chiba001, chiba002, and chiba003 become the targets.
+
+   <p>6.
+
+<pre class="example">     
+       <tt>gxpc</tt> <tt>explore</tt> chiba0
+     
+</pre>
+   <p>Equivalent to `<tt>gxpc</tt> <tt>explore</tt> <tt>-h</tt> <tt>/etc/hosts</tt> chiba0' which is hosts
+beginning with chiba0 in <tt>/etc/hosts</tt> become the targets. Useful
+when you <tt>use</tt> a single cluster and all necessary hosts are listed
+in that file.
+
+   <p>7.
+
+<pre class="example">     
+       <tt>gxpc</tt> <tt>explore</tt>
+     
+</pre>
+   <p>Equivalent to `<tt>gxpc</tt> <tt>explore</tt> <tt>-h</tt> <tt>/etc/hosts</tt>' which is in turn
+equivalent to `<tt>gxpc</tt> <tt>explore</tt> <tt>-h</tt> <tt>/etc/hosts</tt> .'  That is, all hosts
+in <tt>/etc/hosts</tt> become the targets.  This will be rarely useful
+because <tt>/etc/hosts</tt> typically includes hosts you don't want to
+<tt>use</tt>.
+
+<div class="node">
+<a name="export"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#help">help</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#explore">explore</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Command-Reference">Command Reference</a>
+
+</div>
+
+<h3 class="section">5.5 export</h3>
+
+<p><b>Usage:</b>
+<pre class="example">     
+       <tt>gxpc</tt> <tt>export</tt> <var>VAR</var>=<var>VAL</var>
+     
+</pre>
+   <p><b>Description:</b>
+
+   <p>Set environment variable <var>VAR</var> to <var>VAL</var> on the selected nodes. 
+Options are the same as those of `<tt>e</tt>' command.
+
+<div class="node">
+<a name="help"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#i">i</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#export">export</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Command-Reference">Command Reference</a>
+
+</div>
+
+<h3 class="section">5.6 help</h3>
+
+<p><b>Usage:</b>
+<pre class="example">     
+       <tt>gxpc</tt> <tt>help</tt>
+       <tt>gxpc</tt> <tt>help</tt> <var>COMMAND</var>
+     
+</pre>
+   <p><b>Description:</b>
+
+   <p>Show summary of <tt>gxpc</tt> commands or a <tt>help</tt> on a specific <var>COMMAND</var>.
+
+<div class="node">
+<a name="i"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#js">js</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#help">help</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Command-Reference">Command Reference</a>
+
+</div>
+
+<h3 class="section">5.7 i</h3>
+
+<p><b>Usage:</b>
+<pre class="example">     
+       <tt>gxpc</tt> <tt>i</tt>
+     
+</pre>
+   <p><b>Description:</b>
+
+   <p>Enter a new shell with a <tt>gxpc</tt> session.
+
+<div class="node">
+<a name="js"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#log_005flevel">log_level</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#i">i</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Command-Reference">Command Reference</a>
+
+</div>
+
+<h3 class="section">5.8 js</h3>
+
+<p><b>Usage:</b>
+<pre class="example">     
+       <tt>gxpc</tt> <tt>js</tt> [<var>OPTION</var> ...]
+     
+</pre>
+   <div class="node">
+<a name="log_level"></a>
+<a name="log_005flevel"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#make2">make2</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#js">js</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Command-Reference">Command Reference</a>
+
+</div>
+
+<h3 class="section">5.9 log_level, log_base_time</h3>
+
+<p><b>Usage:</b>
+<pre class="example">     
+       <tt>gxpc</tt> <tt>log_level</tt> <var>LEVEL</var>
+       <tt>gxpc</tt> <tt>log_base_time</tt>
+     
+</pre>
+   <p><b>Description:</b>
+
+   <p>Command <tt>log_level</tt> will set the log level of the selected nodes
+to the specified <var>LEVEL</var>.  0 will write no logs. 2 will write many. 
+Command <tt>log_base_time</tt> will reset the time of the selected nodes
+to zero.  Subsequent log entries will record the time relative to
+this time.
+
+<div class="node">
+<a name="make2"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#make">make</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#log_005flevel">log_level</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Command-Reference">Command Reference</a>
+
+</div>
+
+<h3 class="section">5.10 make2</h3>
+
+<p><b>Usage:</b>
+<pre class="example">     
+       <tt>gxpc</tt> <tt>make2</tt> [<var>OPTION</var> ...]
+     
+</pre>
+   <div class="node">
+<a name="make"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#makectl">makectl</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#make2">make2</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Command-Reference">Command Reference</a>
+
+</div>
+
+<h3 class="section">5.11 make</h3>
+
+<p><b>Usage:</b>
+<pre class="example">     
+       <tt>gxpc</tt> <tt>make</tt> GNU-MAKE-ARGS [ -- GXPC-MAKE-ARGS ]
+     
+</pre>
+   <p><b>Description:</b>
+
+   <p>Parallel and distributed <tt>make</tt>.
+
+   <p><b>Options:</b>
+     <dl>
+</dl>
+
+<div class="node">
+<a name="makectl"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#makeman">makeman</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#make">make</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Command-Reference">Command Reference</a>
+
+</div>
+
+<h3 class="section">5.12 makectl</h3>
+
+<p><b>Usage:</b>
+<pre class="example">     
+       <tt>gxpc</tt> <tt>makectl</tt> (leave|leave_now|join)
+     
+</pre>
+   <p><b>Description:</b>
+
+   <p><var>GXP</var> daemons who receive this command will leave, leave immediately,
+or join the gxp <tt>make</tt> computation. 
+<b>Options:</b>
+     <dl>
+</dl>
+
+<div class="node">
+<a name="makeman"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#mapred">mapred</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#makectl">makectl</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Command-Reference">Command Reference</a>
+
+</div>
+
+<h3 class="section">5.13 makeman</h3>
+
+<p><b>Usage:</b>
+<pre class="example">     
+       <tt>gxpc</tt> <tt>makeman</tt>
+     
+</pre>
+   <p><b>Description:</b>
+
+   <p>Generate command reference chapter of gxp manual.
+
+<div class="node">
+<a name="mapred"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#ping">ping</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#makeman">makeman</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Command-Reference">Command Reference</a>
+
+</div>
+
+<h3 class="section">5.14 mapred</h3>
+
+<p><b>Usage:</b>
+<pre class="example">     
+       <tt>gxpc</tt> <tt>mapred</tt> GNU-MAKE-ARGS [ -- GXPC-MAKE-ARGS ]
+     
+</pre>
+   <p><b>Description:</b>
+
+   <p>This is a map-reduce framework built on top of <var>GXP</var> <tt>make</tt>. 
+You can run map-reduce without writing any Makefile by yourself. 
+You specify various options in GNU-MAKE-ARGS in the form of
+var=val.  <var>A</var> simple example:
+
+<pre class="example">     
+       <tt>gxpc</tt> <tt>mapred</tt> -j input=big.txt output=out.txt \
+         mapper=./my_mapper reducer=./my_reducer
+     
+</pre>
+   <p>You will find the '-n' option of <tt>make</tt> useful, since it tells you
+which commands are going to be executed by this command line.
+
+<pre class="example">     
+       <tt>gxpc</tt> <tt>mapred</tt> -n input=big.txt output=out.txt \
+         mapper=./my_mapper reducer=./my_reducer
+     
+</pre>
+   <p><b>Options:</b>
+     <dl>
+You will probably want to specify at least the following. 
+  input=&lt;input filename&gt;     (default: "input")
+  output=&lt;output filename&gt;   (default: "output")
+  mapper=&lt;mapper command&gt;    (default: "ex_word_count_mapper")
+  reducer=&lt;reducer command&gt;  (default: "ex_word_count_reducer")
+
+   </dl>
+
+   <p>&lt;input filename&gt; and &lt;output filename&gt; are filenames. 
+&lt;mapper command&gt; is a command that reads anything from stdin and
+writes key-value pairs. 
+&lt;reducer command&gt; is a command that reads key-value pairs from stdin
+in sorted order and writes arbitrary final outputs.
+
+   <p>You will frequently want to specify the following. 
+  n_mappers=&lt;number of map tasks&gt;       (default: 4)
+  n_reducers=&lt;number of reduce tasks&gt;   (default: 2)
+  reader=&lt;reader command&gt;               (default: "ex_line_reader")
+  int_dir=&lt;intermediate directory&gt;      (default: "int_dir")
+  keep_intermediates=y  will keep all intermediate files in int_dir
+  small_step=y  will execute the entire computation in small steps
+  dbg=y   equivalent to keep_intermediates=y small_step=y (useful for debugging)
+
+   <p>More options are:
+  partitioner=&lt;partitioner command&gt;  (default: "ex_partitioner")
+  pre_reduce_sorter=&lt;sort command&gt;   (default: "sort")
+  final_merger=&lt;merge command&gt;       (default: "cat")
+
+   <p>pre_reduce_sorter is a command that runs before each reducer. 
+It takes in the command line mappers' output filenames and should
+output to the stdout the sorted list of key-value pairs. 
+final_merger takes the filenames of all the reducers' output and
+outputs the final result.
+
+<div class="node">
+<a name="ping"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#popmask">popmask</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#mapred">mapred</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Command-Reference">Command Reference</a>
+
+</div>
+
+<h3 class="section">5.15 ping</h3>
+
+<p><b>Usage:</b>
+<pre class="example">     
+       <tt>gxpc</tt> <tt>ping</tt> [<var>LEVEL</var>]
+     
+</pre>
+   <p><b>Description:</b>
+
+   <p>Send a small message to the selected nodes and show some
+information. The parameter <var>LEVEL</var> is 0 or 1. Default is 0. 
+This is useful to know the name and basic information about
+all or some nodes. It is also useful to check the status (liveness)
+of nodes and <tt>trim</tt> non-responding nodes.
+
+   <p><b>See Also:</b>
+<pre class="example">     
+       <tt>trim</tt> <tt>smask</tt>
+     
+</pre>
+   <div class="node">
+<a name="popmask"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#pp">pp</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#ping">ping</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Command-Reference">Command Reference</a>
+
+</div>
+
+<h3 class="section">5.16 popmask</h3>
+
+<p><b>Usage:</b>
+<pre class="example">     
+       <tt>gxpc</tt> <tt>popmask</tt>
+     
+</pre>
+   <p><b>Description:</b>
+
+   <p>Pop the set of nodes on the top of the stack. The next entry
+that is used to be referred to by name `1' will now be the top
+of the stack, and thus become the default set of nodes selected
+for execution.
+
+   <p><b>See Also:</b>
+<pre class="example">     
+       <tt>pushmask</tt>
+     
+</pre>
+   <div class="node">
+<a name="pp"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#prof_005fstart">prof_start</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#popmask">popmask</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Command-Reference">Command Reference</a>
+
+</div>
+
+<h3 class="section">5.17 pp</h3>
+
+<p><b>Usage:</b>
+<pre class="example">     
+       <tt>gxpc</tt> <tt>pp</tt> GNU-MAKE-ARGS [ -- GXPC-MAKE-ARGS ]
+     
+</pre>
+   <p><b>Description:</b>
+
+   <p>This is a simple parameter parallel framework built on top of <var>GXP</var> <tt>make</tt>. 
+You can run a simple parameter-sweep type parallel applications without
+writing any Makefile by yourself.  You specify various options in GNU-MAKE-ARGS
+in the form of var=val.  <var>A</var> simple example:
+
+<pre class="example">     
+       <tt>gxpc</tt> <tt>pp</tt> -j cmd='./my_cmd -a $(a) $(f) ' a="1 2 3 4" f="a.txt b.txt c.txt" <tt>parameters</tt>="a f"
+     
+</pre>
+   <p>This will execute "./my_cmd -a $(a) $(f)" for all the 4x3=12 combinations
+of a and f. <tt>parameters</tt>= is mandatory.  For all names listed in <tt>parameters</tt>,
+you need to specify at least one value.  You will find the '-n' option of
+<tt>make</tt> useful, since it tells you which commands are going to be executed by
+this command line.
+
+<pre class="example">     
+       <tt>gxpc</tt> <tt>pp</tt> -n cmd='./my_cmd -a $(a) $(f) ' a="1 2 3" f="a.txt b.txt c.txt"
+     
+</pre>
+   <div class="node">
+<a name="prof_start"></a>
+<a name="prof_005fstart"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#smask">smask</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#pp">pp</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Command-Reference">Command Reference</a>
+
+</div>
+
+<h3 class="section">5.18 prof_start, prof_stop</h3>
+
+<p><b>Usage:</b>
+<pre class="example">     
+       <tt>gxpc</tt> <tt>prof_start</tt> <var>FILENAME</var>
+       <tt>gxpc</tt> <tt>prof_stop</tt>
+     
+</pre>
+   <p><b>Description:</b>
+
+   <p>Start/stop profiling of the selected nodes. Stats are saved to
+the <var>FILENAME</var>.
+
+<div class="node">
+<a name="smask"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#quit">quit</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#prof_005fstart">prof_start</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Command-Reference">Command Reference</a>
+
+</div>
+
+<h3 class="section">5.19 smask, savemask, pushmask</h3>
+
+<p><b>Usage:</b>
+<pre class="example">     
+       <tt>gxpc</tt> <tt>smask</tt>    [-]
+       <tt>gxpc</tt> <tt>savemask</tt> [-] <var>NAME</var>
+       <tt>gxpc</tt> <tt>pushmask</tt> [-]
+       <tt>e</tt>.g.,
+       <tt>gxpc</tt>  <tt>e</tt>  'uname | grep Linux'
+       <tt>gxpc</tt>  <tt>smask</tt>
+     
+</pre>
+   <p><b>Description:</b>
+
+   <p>All three commands have a common effect. That is to modify the
+set of nodes that will execute subsequent commands.  When `-'
+argument is not given, nodes that executed the last command and
+succeeded are selected. With argument `-', nodes that executed
+the last command and failed are set. The definition of sucess or
+failure depends on commands, but in the case of `<tt>e</tt>' command, a
+node is considered to succeed if the command exits with status
+zero.
+
+   <p>These commands can be used to efficiently choose the nodes
+to execute subsequent commands by various criterion.
+
+   <p><b>Examples:</b>
+<pre class="example">     
+     
+</pre>
+   <p>1.
+
+<pre class="example">     
+       <tt>gxpc</tt>  <tt>e</tt>  'uname | grep Linux'
+       <tt>gxpc</tt>  <tt>smask</tt>
+     
+</pre>
+   <p>This will set the execution mask of Linux nodes.
+
+   <p>2.
+
+<pre class="example">     
+       <tt>gxpc</tt>  <tt>e</tt>  'which apt-get'
+       <tt>gxpc</tt>  <tt>smask</tt>  -
+       <tt>gxpc</tt>  <tt>e</tt>  hostname
+     
+</pre>
+   <p>This will set the execution mask of nodes that do not have apt-get
+command, and the last command will show their hostnames.
+
+   <p>To see the effect of these commands, it is advised to include the
+gxp3 directory in your <var>PATH</var>, and add something like the following
+in your shell (bash) prompt, which will show the number of nodes
+that succeeded the last command, the number of nodes that is
+currently selected, and the number all nodes.
+
+<pre class="example">     
+       <tt>export</tt> <var>PS1</var>='\h:\W`which gxp_prompt 1&gt; /dev/null &amp;&amp; gxp_prompt`% '
+     
+</pre>
+   <p>With this, you can see the effect of these commands in shell
+prompt.
+
+<pre class="example">     
+       [66/66/66]% <tt>e</tt> 'uname | grep Linux'
+       Linux
+       Linux
+       Linux
+       Linux
+       Linux
+       Linux
+       Linux
+       Linux
+       Linux
+       Linux
+       [10/66/66]% <tt>gxpc</tt> <tt>smask</tt>
+       [10/10/66]%
+     
+</pre>
+   <p>In addition to setting the execution mask, <tt>savemask</tt> saves the set
+of selected nodes with the specified name. Sets of nodes hereby
+saved can be later used for execution by giving <tt>&ndash;withmask</tt> (<tt>-m</tt>)
+option. This is useful when your work needs several, typical set
+of nodes to execute commands on. For example, you may save a
+small number of nodes for test, all gateway nodes to compile
+programs, all nodes within a particular cluster, and really all
+nodes.
+
+   <p>Command <tt>pushmask</tt> is similar to <tt>savemask</tt>, but the set is saved
+onto a stack. The newly selected set of nodes are on the top of
+the stack and named `0'.  Previously selected nodes are named by
+the distance from the top.
+
+   <p><b>See Also:</b>
+<pre class="example">     
+       <tt>showmasks</tt> <tt>rmask</tt> <tt>restoremask</tt> <tt>popmask</tt>
+     
+</pre>
+   <div class="node">
+<a name="quit"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#reclaim">reclaim</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#smask">smask</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Command-Reference">Command Reference</a>
+
+</div>
+
+<h3 class="section">5.20 quit</h3>
+
+<p><b>Usage:</b>
+<pre class="example">     
+       <tt>gxpc</tt> <tt>quit</tt> [<tt>--session_only</tt>]
+     
+</pre>
+   <p><b>Description:</b>
+
+   <p>Quit gxp session. By default, all daemons will exit. 
+If <tt>&ndash;session_only</tt> is given, daemons keep running and only the
+session will cease.
+
+<div class="node">
+<a name="reclaim"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#restoremask">restoremask</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#quit">quit</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Command-Reference">Command Reference</a>
+
+</div>
+
+<h3 class="section">5.21 reclaim</h3>
+
+<p><b>Usage:</b>
+<pre class="example">     
+       <tt>gxpc</tt> <tt>reclaim</tt> tid
+     
+</pre>
+   <p><b>Description:</b>
+
+   <p>Command <tt>reclaim</tt> will <tt>reclaim</tt> task tid unconditionally.
+
+<div class="node">
+<a name="restoremask"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#rmask">rmask</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#reclaim">reclaim</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Command-Reference">Command Reference</a>
+
+</div>
+
+<h3 class="section">5.22 restoremask</h3>
+
+<p><b>Usage:</b>
+<pre class="example">     
+       <tt>gxpc</tt> <tt>restoremask</tt> <var>NAME</var>
+     
+</pre>
+   <div class="node">
+<a name="rmask"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#rsh">rsh</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#restoremask">restoremask</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Command-Reference">Command Reference</a>
+
+</div>
+
+<h3 class="section">5.23 rmask</h3>
+
+<p><b>Usage:</b>
+<pre class="example">     
+       <tt>gxpc</tt> <tt>rmask</tt>
+     
+</pre>
+   <p><b>Description:</b>
+
+   <p>Reset execution mask. Let all nodes execute subsequent commands.
+
+   <p><b>See Also:</b>
+<pre class="example">     
+       <tt>showmasks</tt> <tt>smask</tt> <tt>savemask</tt> <tt>restoremask</tt> <tt>pushmask</tt> <tt>popmask</tt>
+     
+</pre>
+   <div class="node">
+<a name="rsh"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#set_005fmax_005fbuf_005flen">set_max_buf_len</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#rmask">rmask</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Command-Reference">Command Reference</a>
+
+</div>
+
+<h3 class="section">5.24 rsh</h3>
+
+<p><b>Usage:</b>
+<pre class="example">     
+       <tt>gxpc</tt> <tt>rsh</tt> [<var>OPTIONS</var>]
+       <tt>gxpc</tt> <tt>rsh</tt> [<var>OPTIONS</var>] rsh_name
+       <tt>gxpc</tt> <tt>rsh</tt> [<var>OPTIONS</var>] rsh_name rsh_like_command_template
+     
+</pre>
+   <p><b>Description:</b>
+
+   <p>Show, add, or modify rsh-like command explore/use will recognize
+  to the repertoire. 
+  'gxpc <tt>rsh</tt>' lists all configured rsh-like commands. 
+  'gxpc <tt>rsh</tt> rsh_name' shows the specified rsh-like command. 
+  'gxpc <tt>rsh</tt> rsh_name rsh_like_command_template' adds or modifies (if exist)
+  the specified rsh-like command to <tt>use</tt> rsh_like_command_template.
+
+<pre class="example">     
+       The rsh_name is used as the first parameter of 'use' command (<tt>e</tt>.g.,
+       'gxpc <tt>use</tt> ssh src target' or 'gxpc <tt>use</tt> <tt>rsh</tt> &lt;src&gt; &lt;target&gt;').
+     
+</pre>
+   <p>By default, the following rsh-like commands are builtin.
+
+<pre class="example">     
+       ssh, ssh_as, <tt>rsh</tt>, rsh_as, sh, sge, torque, and pbs.
+     
+</pre>
+   <p><b>Options:</b>
+     <dl>
+<dt><tt>--full</tt><dd>    when invoked as <tt>gxpc</tt> <tt>rsh</tt> <tt>&ndash;full</tt> (with no other args),
+    show command lines of all available rsh-like commands.
+
+   </dl>
+
+   <p><b>Examples:</b>
+<pre class="example">     
+     1.
+       <tt>gxpc</tt> <tt>rsh</tt> ssh
+       (output) ssh : ssh -o 'StrictHostKeyChecking no' ... -A %target% %cmd%
+     
+</pre>
+   <p>This displays that an rsh-like command named 'ssh' is configured,
+  and gxp understands that, to run a command a host via ssh, it should
+  <tt>use</tt> a command:
+
+<pre class="example">     
+              ssh -o 'StrictHostKeyChecking no' ... -A %target% %cmd%
+     
+</pre>
+   <p>with %target% replaced by a target name (normally a
+  hostname) and %cmd% by whatever commands it wants
+  to execute on the target.
+
+   <p>2. 
+  <tt>gxpc</tt> <tt>rsh</tt> ssh ssh -i elsewhere/id_dsa -o 'StrictHostKeyChecking no' -A %target% %cmd%
+
+<pre class="example">     
+       This instructs gxp to <tt>use</tt> command line:
+     
+</pre>
+   <p>ssh -i elsewhere/id_dsa -o 'StrictHostKeyChecking no' -A %target% %cmd%
+
+<pre class="example">     
+       when it uses ssh.  You can arbitrarily name a new rsh-like command.
+       For example, let's say on some hosts, ssh daemons listen on customized
+       ports (say 2000) and you need to connect to that port to login those
+       hosts, while connecting to the regular port to login others. Then you
+       first define a new rsh-like command.
+     
+</pre>
+   <p>3. 
+  <tt>gxpc</tt> <tt>rsh</tt> ssh2000 ssh -p 2000 -o 'StrictHostKeyChecking no' -A %target% %cmd%
+
+<pre class="example">     
+       And you specicy ssh2000 label to login those hosts, using 'use' command. <tt>e</tt>.g.,
+     
+</pre>
+   <p><tt>use</tt> ssh2000 &lt;src&gt; &lt;target&gt;
+
+   <p><b>See Also:</b>
+<pre class="example">     
+       <tt>use</tt> <tt>explore</tt>
+     
+</pre>
+   <div class="node">
+<a name="set_max_buf_len"></a>
+<a name="set_005fmax_005fbuf_005flen"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#show_005fexplore">show_explore</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#rsh">rsh</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Command-Reference">Command Reference</a>
+
+</div>
+
+<h3 class="section">5.25 set_max_buf_len</h3>
+
+<p><b>Usage:</b>
+<pre class="example">     
+       <tt>gxpc</tt> <tt>set_max_buf_len</tt> <var>N</var>
+     
+</pre>
+   <p><b>Description:</b>
+
+   <p>Set maximum internal buffer size of gxp daemons in bytes. 
+  default is 10KB and any value below the default is ignored. If no argument
+  is given, <tt>use</tt> the default value.
+
+<div class="node">
+<a name="show_explore"></a>
+<a name="show_005fexplore"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#showmasks">showmasks</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#set_005fmax_005fbuf_005flen">set_max_buf_len</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Command-Reference">Command Reference</a>
+
+</div>
+
+<h3 class="section">5.26 show_explore</h3>
+
+<p><b>Usage:</b>
+<pre class="example">     
+       <tt>gxpc</tt> <tt>show_explore</tt> <var>SRC</var> <var>TARGET</var>
+     
+</pre>
+   <p><b>Description:</b>
+
+   <p>Show command used to <tt>explore</tt> <var>TARGET</var> from <var>SRC</var>.
+
+<div class="node">
+<a name="showmasks"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#stat">stat</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#show_005fexplore">show_explore</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Command-Reference">Command Reference</a>
+
+</div>
+
+<h3 class="section">5.27 showmasks</h3>
+
+<p><b>Usage:</b>
+<pre class="example">     
+       <tt>gxpc</tt> <tt>showmasks</tt> [<tt>--level</tt> 0/1] [<var>NAME</var>]
+       <tt>e</tt>.g.,
+       <tt>gxpc</tt> <tt>showmasks</tt>
+       <tt>gxpc</tt> <tt>showmasks</tt> <tt>--level</tt> 1
+     
+</pre>
+   <p><b>Description:</b>
+
+   <p>Show summary (<tt>&ndash;level</tt> 0) or detail (<tt>&ndash;level</tt> 1) of all execution
+masks (if `name' is omitted) or a specified excution mask named
+`name.' The name of the current default execution mask is `0'.
+
+   <p><b>Examples:</b>
+<pre class="example">     
+       <tt>gxpc</tt> <tt>showmasks</tt>
+       <tt>gxpc</tt> <tt>showmasks</tt> <tt>--level</tt> 0     # show summary of all exec masks
+       <tt>gxpc</tt> <tt>showmasks</tt> <tt>--level</tt> 0 0   # show summary of the current mask
+       <tt>gxpc</tt> <tt>showmasks</tt> <tt>--level</tt> 1 0   # show detail of current exec mask
+       <tt>gxpc</tt> <tt>showmasks</tt> <tt>--level</tt> 1 all # show detail of exec mask named `all'
+     
+</pre>
+   <p>Without any argument as in the first line, a summary like the
+following is shown.
+
+<pre class="example">     
+        0 : 1
+        1 : 66
+        six : 6
+        ten : 8
+        half : 27
+     
+</pre>
+   <p>This says there are three execution masks, called `0', `1',
+`six', `ten', and `half.' The right column indicates the number
+of nodes that will execute a command when the mask is selected by
+a <tt>&ndash;withmask</tt> (<tt>-m</tt>) option. `0' is the current, default execution
+mask, used when <tt>&ndash;withmask</tt> (<tt>-m</tt>) option is not given. These
+masks are created by <tt>savemask</tt> or <tt>pushmask</tt> command.
+
+   <p>When option <tt>&ndash;level</tt> 1 is given, details about the execution mask
+will be shown, like the following.
+
+<pre class="example">     
+       six : 6
+        idx: name (gupid)
+          -: hongo-lucy-tau-2006-12-31-22-40-24-31387
+          -:  hongo002-tau-2006-12-31-13-39-17-338
+          0:   hongo010-tau-2006-12-31-22-25-58-20559
+          -:  hongo006-tau-2006-12-31-22-27-19-11951
+          1:   hongo020-tau-2006-12-31-22-34-06-11026
+          -:  hongo001-tau-2006-12-31-22-34-38-15517
+          2:   hongo030-tau-2006-12-31-22-44-07-4931
+          -:  hongo007-tau-2006-12-31-22-30-54-21738
+          3:   hongo040-tau-2006-12-31-22-47-55-32666
+          -:  hongo004-tau-2008-12-31-22-42-33-31254
+          4:   hongo060-tau-2006-12-31-22-42-59-3899
+          -:  hongo005-tau-2006-12-31-22-38-30-1150
+          5:   hongo050-tau-2006-12-31-22-40-55-18088
+     
+</pre>
+   <p>This is a subtree of the whole tree of gxp daemons.  Nodes that will
+actually execute commands will have an index number (0, 1, ..., 5) on
+the first column. Nodes marked with `-' will not execute the
+command, but are part of the minimum subtree containing those six
+nodes.
+
+   <p><b>See Also:</b>
+<pre class="example">     
+       <tt>smask</tt> <tt>rmask</tt> <tt>savemask</tt> <tt>restoremask</tt> <tt>pushmask</tt> <tt>popmask</tt>
+     
+</pre>
+   <div class="node">
+<a name="stat"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#trim">trim</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#showmasks">showmasks</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Command-Reference">Command Reference</a>
+
+</div>
+
+<h3 class="section">5.28 stat</h3>
+
+<p><b>Usage:</b>
+<pre class="example">     
+       <tt>gxpc</tt> <tt>stat</tt> [<var>LEVEL</var>]
+     
+</pre>
+   <p><b>Description:</b>
+
+   <p>Show all live gxp daemons in tree format. <var>LEVEL</var> is 0, 1, or 2 and
+determines the detail level of the information shown.
+
+<div class="node">
+<a name="trim"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#use">use</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#stat">stat</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Command-Reference">Command Reference</a>
+
+</div>
+
+<h3 class="section">5.29 trim</h3>
+
+<p><b>Usage:</b>
+<pre class="example">     
+       <tt>gxpc</tt> <tt>trim</tt>
+     
+</pre>
+   <p><b>Description:</b>
+
+   <p>Trim (release) some subtrees of gxp daemons. This is typically
+used after a <tt>ping</tt> cmd followed by <tt>smask</tt>, to prune non-responding
+(dead) daemons.  Specifically, <tt>trim</tt> command will be executed on
+the selected nodes, and each such node will throw away a children
+<var>C</var> if no nodes under the subtree rooted at <var>C</var> are selected for
+execution of this <tt>trim</tt> command. This effectively prunes (trims)
+the subtree from the tree of gxp daemons. For example,
+
+<pre class="example">     
+       <tt>gxpc</tt> <tt>ping</tt>
+       # If there are some non-responding daemons, this command will hang.
+       # type &lt;Ctrl-C&gt; to <tt>quit</tt>.
+       <tt>gxpc</tt> <tt>smask</tt>
+       <tt>gxpc</tt> <tt>trim</tt>
+     
+</pre>
+   <div class="node">
+<a name="use"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#version">version</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#trim">trim</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Command-Reference">Command Reference</a>
+
+</div>
+
+<h3 class="section">5.30 use, edges</h3>
+
+<p><b>Usage:</b>
+<pre class="example">     
+       <tt>gxpc</tt> <tt>use</tt>          [<tt>--as</tt> <var>USER</var>] <var>RSH_NAME</var> <var>SRC</var> [<var>TARGET</var>]
+       <tt>gxpc</tt> <tt>use</tt> <tt>--delete</tt> [<tt>--as</tt> <var>USER</var>] <var>RSH_NAME</var> <var>SRC</var> [<var>TARGET</var>]
+       <tt>gxpc</tt> <tt>use</tt>
+       <tt>gxpc</tt> <tt>use</tt> <tt>--delete</tt> [idx]
+     
+</pre>
+   <p><tt>e</tt>.g.,
+  <tt>gxpc</tt> <tt>use</tt> ssh your_hostname compute_node_prefix
+
+   <p><b>Description:</b>
+
+<pre class="example">     
+       Configure rsh-like commands used to login targets matching a
+     particular pattern from hosts matching a particular pattern. The
+     typical usage is `<tt>gxpc</tt> <tt>use</tt> <var>RSH_NAME</var> <var>SRC</var> <var>TARGET</var>', which says gxp can
+     <tt>use</tt> an rsh-like command <var>RSH_NAME</var> for <var>SRC</var> to login <var>TARGET</var>. <tt>gxpc</tt>
+     remembers these facts to decide which hosts should issue which
+     commands to login which hosts, when <tt>explore</tt> command is issued. See the
+     tutorial section of the manual.
+     
+</pre>
+   <p><b>Examples:</b>
+<pre class="example">     
+       <tt>gxpc</tt> <tt>use</tt>           ssh abc000.def.com pqr.xyz.ac.jp
+       <tt>gxpc</tt> <tt>use</tt>           ssh abc000 pqr
+       <tt>gxpc</tt> <tt>use</tt>           ssh abc
+       <tt>gxpc</tt> <tt>use</tt>           <tt>rsh</tt> abc
+       <tt>gxpc</tt> <tt>use</tt> <tt>--as</tt> taue ssh abc000 pqr
+       <tt>gxpc</tt> <tt>use</tt> qrsh      abc
+       <tt>gxpc</tt> <tt>use</tt> qrsh_host abc
+       <tt>gxpc</tt> <tt>use</tt> sge       abc
+       <tt>gxpc</tt> <tt>use</tt> torque    abc
+     
+</pre>
+   <p>The first line says that, if <tt>gxpc</tt> is told to login pqr.xyz.ac.jp by
+<tt>explore</tt> command, hosts named abc000.def.com can <tt>use</tt> `ssh' method to do
+so.  How it translates into the actual ssh command line can be shown
+by `<tt>show_explore</tt>' command (try `<tt>gxpc</tt> <tt>help</tt> <tt>show_explore</tt>') and can be
+configured by `<tt>rsh</tt>' command (try `<tt>gxpc</tt> <tt>help</tt> <tt>rsh</tt>').
+
+   <p><var>SRC</var> and <var>TARGET</var> are actually regular expressions, so the line like the
+first one can often be written like the second one.  The first line
+is equivalent to the second line as long as there is only one host
+begining with abc000 and there is only one target beginning with pqr. 
+In general, the specification:
+
+<pre class="example">     
+       <tt>gxpc</tt> <tt>use</tt> <var>RSH_NAME</var> <var>SRC</var> <var>TARGET</var>
+     
+</pre>
+   <p>is read: if <tt>gxpc</tt> is told to login a target matching regular
+expession <var>TARGET</var>, a host matching regular expression <var>SRC</var> can <tt>use</tt>
+<var>RSH_NAME</var> to do so.
+
+   <p>Note that the effect of <tt>use</tt> command is <var>NOT</var> to specify which target
+<tt>gxpc</tt> should login, but to specify <var>HOW</var> it can do so, if it is told
+to. It is the role of <tt>explore</tt> command to specify which target hosts it
+should login
+
+   <p>If the <var>TARGET</var> argument is omitted as in the third line, it is
+treated as if <var>TARGET</var> expression is <var>SRC</var>. That is, the third line
+is equivalent to:
+
+<pre class="example">     
+       <tt>gxpc</tt> <tt>use</tt> ssh abc abc
+     
+</pre>
+   <p>This is often useful to express that ssh login is possible
+between hosts within a single cluster, which typically have a
+common prefix in their host names. If the traditional <tt>rsh</tt> command
+is allowed within a single cluster, the fourth line may be useful
+too.
+
+   <p>If <tt>&ndash;as</tt> user option is given, login is issued using an explicit user
+name. The fifth line says when gxp attempts to login pqr from abc000,
+the explicit user name `taue' should be given. You do not need this as
+long as the underlying rsh-like command will complement it by a
+configuration file. <tt>e</tt>.g., ssh will read ~/.ssh/config to complement
+user name used to login a particular host.
+
+   <p>qrsh_host uses command qrsh, with an explicit hostname argument
+to login a particular host (<tt>i</tt>.<tt>e</tt>., qrsh -l hostname=...).  This is
+useful in environments where direct ssh is discouraged or
+disallowed and qrsh is preferred.
+
+   <p>qrsh also uses qrsh, but without an explicit hostname. The host
+is selected by the scheduler. Therefore it does not <tt>make</tt> sense to
+try to speficify a particular hostname as <var>TARGET</var>.  Thus, the
+effect of the line
+
+<pre class="example">     
+       <tt>gxpc</tt> <tt>use</tt> qrsh abc
+     
+</pre>
+   <p>is if targets beginning with abc is given (upon <tt>explore</tt> command),
+a host beginning with abc will issue qrsh, and get whichever host
+is allocated by the scheduler.
+
+   <p><b>See Also:</b>
+<pre class="example">     
+       <tt>explore</tt> <tt>rsh</tt>
+     
+</pre>
+   <div class="node">
+<a name="version"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#vgxp">vgxp</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#use">use</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Command-Reference">Command Reference</a>
+
+</div>
+
+<h3 class="section">5.31 version</h3>
+
+<p><b>Usage:</b>
+<pre class="example">     
+       <tt>gxpc</tt> <tt>version</tt>
+     
+</pre>
+   <div class="node">
+<a name="vgxp"></a>
+<p><hr>
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#version">version</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Command-Reference">Command Reference</a>
+
+</div>
+
+<h3 class="section">5.32 vgxp</h3>
+
+<p><b>Usage:</b>
+<pre class="example">     
+       <tt>gxpc</tt> <tt>vgxp</tt>
+     
+</pre>
+   <div class="node">
+<a name="Tools-Reference"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#Troubleshooting">Troubleshooting</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#Command-Reference">Command Reference</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Top">Top</a>
+
+</div>
+
+<h2 class="chapter">6 Tools Reference</h2>
+
+<p>todo
+
+<div class="node">
+<a name="Troubleshooting"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#Environment-Variables-Reference">Environment Variables Reference</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#Tools-Reference">Tools Reference</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Top">Top</a>
+
+</div>
+
+<h2 class="chapter">7 Troubleshooting</h2>
+
+<p>todo
+
+<div class="node">
+<a name="Environment-Variables-Reference"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#Key-Stroke-Reference">Key Stroke Reference</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#Troubleshooting">Troubleshooting</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Top">Top</a>
+
+</div>
+
+<h2 class="chapter">8 Environment Variables Reference</h2>
+
+<p>todo
+
+<div class="node">
+<a name="Key-Stroke-Reference"></a>
+<p><hr>
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#Environment-Variables-Reference">Environment Variables Reference</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Top">Top</a>
+
+</div>
+
+<h2 class="chapter">9 Key Stroke Reference</h2>
+
+<p>todo
+
+<ul class="menu">
+<li><a accesskey="1" href="#Indices">Indices</a>
+<li><a accesskey="2" href="#Function-Index">Function Index</a>
+<li><a accesskey="3" href="#Variable-Index">Variable Index</a>
+<li><a accesskey="4" href="#Data-Type-Index">Data Type Index</a>
+<li><a accesskey="5" href="#Program-Index">Program Index</a>
+<li><a accesskey="6" href="#Concept-Index">Concept Index</a>
+</ul>
+
+<div class="node">
+<a name="Indices"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#Function-Index">Function Index</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#Key-Stroke-Reference">Key Stroke Reference</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Key-Stroke-Reference">Key Stroke Reference</a>
+
+</div>
+
+<h3 class="unnumberedsec">Indices</h3>
+
+<ul class="menu">
+<li><a accesskey="1" href="#Function-Index">Function Index</a>
+<li><a accesskey="2" href="#Variable-Index">Variable Index</a>
+<li><a accesskey="3" href="#Data-Type-Index">Data Type Index</a>
+<li><a accesskey="4" href="#Program-Index">Program Index</a>
+<li><a accesskey="5" href="#Concept-Index">Concept Index</a>
+</ul>
+
+<div class="node">
+<a name="Function-Index"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#Variable-Index">Variable Index</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#Indices">Indices</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Key-Stroke-Reference">Key Stroke Reference</a>
+
+</div>
+
+<h3 class="unnumberedsec">Function Index</h3>
+
+<ul class="index-fn" compact>
+</ul><div class="node">
+<a name="Variable-Index"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#Data-Type-Index">Data Type Index</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#Function-Index">Function Index</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Key-Stroke-Reference">Key Stroke Reference</a>
+
+</div>
+
+<h3 class="unnumberedsec">Variable Index</h3>
+
+
+
+<ul class="index-vr" compact>
+   </ul><div class="node">
+<a name="Data-Type-Index"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#Program-Index">Program Index</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#Variable-Index">Variable Index</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Key-Stroke-Reference">Key Stroke Reference</a>
+
+</div>
+
+<h3 class="unnumberedsec">Data Type Index</h3>
+
+
+
+<ul class="index-tp" compact>
+   </ul><div class="node">
+<a name="Program-Index"></a>
+<p><hr>
+Next:&nbsp;<a rel="next" accesskey="n" href="#Concept-Index">Concept Index</a>,
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#Data-Type-Index">Data Type Index</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Key-Stroke-Reference">Key Stroke Reference</a>
+
+</div>
+
+<h3 class="unnumberedsec">Program Index</h3>
+
+
+
+<ul class="index-pg" compact>
+   </ul><div class="node">
+<a name="Concept-Index"></a>
+<p><hr>
+Previous:&nbsp;<a rel="previous" accesskey="p" href="#Program-Index">Program Index</a>,
+Up:&nbsp;<a rel="up" accesskey="u" href="#Key-Stroke-Reference">Key Stroke Reference</a>
+
+</div>
+
+<h3 class="unnumberedsec">Concept Index</h3>
+
+
+
+<ul class="index-cp" compact>
+   </ul>
+<div class="contents">
+<h2>Table of Contents</h2>
+<ul>
+<li><a name="toc_Getting-Started" href="#Getting-Started">1 Getting Started</a>
+<ul>
+<li><a href="#Prerequisites">1.1 Prerequisites</a>
+<li><a href="#Installation">1.2 Installation</a>
+</li></ul>
+<li><a name="toc_Tutorial" href="#Tutorial">2 Tutorial</a>
+<ul>
+<li><a href="#Testing-Your-Installation">2.1 Testing Your Installation</a>
+<li><a href="#Running-commands-via-e-command">2.2 Running commands via e command</a>
+<li><a href="#Getting-more-hosts-with-use_002fexplore-commands">2.3 Getting more hosts with use/explore commands</a>
+<li><a href="#Introduction-to-SSH-for-GXP-Users">2.4 Introduction to SSH for GXP Users</a>
+<li><a href="#Quick-Reference-of-Frequently-Used-Commands">2.5 Quick Reference of Frequently Used Commands</a>
+</li></ul>
+<li><a name="toc_Using-GXP-make-for-Parallel-Processing" href="#Using-GXP-make-for-Parallel-Processing">3 Using GXP make for Parallel Processing</a>
+<ul>
+<li><a href="#GXP-make">3.1 GXP make</a>
+</li></ul>
+<li><a name="toc_GXP-internals" href="#GXP-internals">4 GXP internals</a>
+<ul>
+<li><a href="#Files">4.1 Files</a>
+</li></ul>
+<li><a name="toc_Command-Reference" href="#Command-Reference">5 Command Reference</a>
+<ul>
+<li><a href="#cd">5.1 cd</a>
+<li><a href="#e">5.2 e, mw</a>
+<li><a href="#ep">5.3 ep</a>
+<li><a href="#explore">5.4 explore</a>
+<li><a href="#export">5.5 export</a>
+<li><a href="#help">5.6 help</a>
+<li><a href="#i">5.7 i</a>
+<li><a href="#js">5.8 js</a>
+<li><a href="#log_005flevel">5.9 log_level, log_base_time</a>
+<li><a href="#make2">5.10 make2</a>
+<li><a href="#make">5.11 make</a>
+<li><a href="#makectl">5.12 makectl</a>
+<li><a href="#makeman">5.13 makeman</a>
+<li><a href="#mapred">5.14 mapred</a>
+<li><a href="#ping">5.15 ping</a>
+<li><a href="#popmask">5.16 popmask</a>
+<li><a href="#pp">5.17 pp</a>
+<li><a href="#prof_005fstart">5.18 prof_start, prof_stop</a>
+<li><a href="#smask">5.19 smask, savemask, pushmask</a>
+<li><a href="#quit">5.20 quit</a>
+<li><a href="#reclaim">5.21 reclaim</a>
+<li><a href="#restoremask">5.22 restoremask</a>
+<li><a href="#rmask">5.23 rmask</a>
+<li><a href="#rsh">5.24 rsh</a>
+<li><a href="#set_005fmax_005fbuf_005flen">5.25 set_max_buf_len</a>
+<li><a href="#show_005fexplore">5.26 show_explore</a>
+<li><a href="#showmasks">5.27 showmasks</a>
+<li><a href="#stat">5.28 stat</a>
+<li><a href="#trim">5.29 trim</a>
+<li><a href="#use">5.30 use, edges</a>
+<li><a href="#version">5.31 version</a>
+<li><a href="#vgxp">5.32 vgxp</a>
+</li></ul>
+<li><a name="toc_Tools-Reference" href="#Tools-Reference">6 Tools Reference</a>
+<li><a name="toc_Troubleshooting" href="#Troubleshooting">7 Troubleshooting</a>
+<li><a name="toc_Environment-Variables-Reference" href="#Environment-Variables-Reference">8 Environment Variables Reference</a>
+<li><a name="toc_Key-Stroke-Reference" href="#Key-Stroke-Reference">9 Key Stroke Reference</a>
+<ul>
+<li><a href="#Indices">Indices</a>
+<li><a href="#Function-Index">Function Index</a>
+<li><a href="#Variable-Index">Variable Index</a>
+<li><a href="#Data-Type-Index">Data Type Index</a>
+<li><a href="#Program-Index">Program Index</a>
+<li><a href="#Concept-Index">Concept Index</a>
+</li></ul>
+</li></ul>
+</div>
+
+</body></html>
+

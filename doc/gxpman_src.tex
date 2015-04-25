@@ -1,0 +1,776 @@
+\input texinfo  @c -*-texinfo-*-
+
+@c see README for how to edit this file
+@c DO NOT EDIT gxpman.tex, but gxpman_src.tex
+@c
+@c (texinfo-insert-node-lines) will add @node to section/chapter
+@c C-c C-u C-e will complete their names.
+@c 
+@c C-c C-u C-e  (texinfo-every-node-update) ---> complete node names and links
+@c C-c C-u C-a  (texinfo-all-menus-update)  ---> update menu
+@c C-c C-u m    (texinfo-master-menu)       ---> make master menu
+
+@setfilename gxpman.info
+@settitle GXP3 User's Guide
+@iftex
+@setchapternewpage on
+@end iftex
+@comment %**end of header
+
+
+Copyright 2007 Kenjiro Taura (Read COPYRIGHT for detailed information.)
+
+
+@titlepage
+@title GXP3 User's Guide
+@subtitle January 2007
+@author Kenjiro Taura
+@author
+@author University of Tokyo
+@author 7-3-1 Hongo Bunkyo-ku Tokyo, 113-0033 Japan
+@page
+@vskip 0pt plus 1filll
+Copyright @copyright{} 2007 Kenjiro Taura
+@end titlepage
+
+@node Top, Getting Started, (dir), (dir)
+
+@ifhtml
+@c HTML <link rel="STYLESHEET" href="gxpman.css" type="text/css" />
+@c HTML <h1>GXP3 User Manual</h1>
+@end ifhtml
+
+@menu
+* Getting Started::             
+* Tutorial::                    
+* Using GXP make for Parallel Processing::  
+* GXP internals::               
+
+@detailmenu
+ --- The Detailed Node Listing ---
+
+Getting Started
+
+* Prerequisites::               
+* Installation::                
+
+Tutorial
+
+* Testing Your Installation::   
+* Running commands via e command::  
+* Getting more hosts with use/explore commands::  
+* Introduction to SSH for GXP Users::  
+* Quick Reference of Frequently Used Commands::  
+
+Using GXP make for Parallel Processing
+
+* GXP make::                    
+
+GXP internals
+
+* Files::                       
+
+Indices
+
+* Function Index::              
+* Variable Index::              
+* Data Type Index::             
+* Program Index::               
+* Concept Index::               
+
+@end detailmenu
+@end menu
+
+@node Getting Started, Tutorial, Top, Top
+@chapter Getting Started
+
+
+@menu
+* Prerequisites::               
+* Installation::                
+@end menu
+
+@node Prerequisites, Installation, Getting Started, Getting Started
+@section Prerequisites
+
+In order to play with GXP, you need
+@itemize
+@item a Unix platform
+@item Python interpreter
+@end itemize
+To do anything interesting with GXP, you should be able to remote
+login (e.g., via SSH, RSH, QSUB, etc.) computers you want to use.
+
+GXP has been developed on Linux and tested on Linux and FreeBSD.  It
+has been tested with Python 1.5.2, 2.2.2, 2.3.4, and 2.4.2.  There are
+high chances that it runs with later versions of Python.
+
+Python is a very popular programming language that is installed on
+most Linux platforms. For remote logins, it's very likely that it
+accepts SSH logins. Thus there are chances that the above prerequisits
+are already satisfied in your platform.
+
+@node Installation,  , Prerequisites, Getting Started
+@section Installation
+
+You can obtain the latest version (tarball) from sourceforge:
+@example
+    http://sourceforge.net/projects/gxp/
+@end example
+and then unpack the tarball by something like:
+@example
+    tar zxvf gxp3.xx.tar.bz2
+@end example
+The exact file name (and the directory name) depends on the current
+version of GXP. Perhaps you want to make a symlink @t{gxp3} to the
+directory you obtained, or directly rename the directory to @t{gxp3}.
+
+If you have cvs, you can use it to obtain the latest copy under development.
+@example
+cvs -d :pserver:anonymous@@gxp.cvs.sourceforge.net:/cvsroot/gxp co gxp3
+@end example
+
+Either way, you will have directory called @t{gxp3}. Since GXP and
+accompanying tools are all written in Python, you need no compilation.
+Instead, all you need to do is either to:
+
+@enumerate
+@item make a symlink from anywhere in your path to @t{gxp3/gxpc}. For example,
+@example
+ln -s /absolute/path/to/gxp3/gxpc /usr/local/bin/gxpc
+@end example
+or,
+
+@item add @t{gxp3} directory to your PATH environment variable. For example,
+add the following line in your @t{.bashrc}.
+@example
+export PATH=$PATH:/absolute/path/to/gxp3
+@end example
+@end enumerate
+
+In the former, it is important to make a symlink to, not a copy of,
+@t{gxpc}. Otherwise it fails to find accompanying files under @t{gxp3}
+directory.
+
+To test your installation, type @t{gxpc} to your shell prompt and see
+something like this.
+@example
+$ gxpc
+gxpc: no daemon found, create one
+/tmp/gxp-you/gxpsession-hongo019-you-2007-07-03-13-56-21-3561-19041263
+@end example
+
+@xref{Troubleshooting}, if you fail.
+
+
+@node Tutorial, Using GXP make for Parallel Processing, Getting Started, Top
+@chapter Tutorial
+
+@menu
+* Testing Your Installation::   
+* Running commands via e command::  
+* Getting more hosts with use/explore commands::  
+* Introduction to SSH for GXP Users::  
+* Quick Reference of Frequently Used Commands::  
+@end menu
+
+@node Testing Your Installation, Running commands via e command, Tutorial, Tutorial
+@section Testing Your Installation
+
+The most basic function of GXP is to run commands on many hosts. To
+this end, you first need to learn how to run commands and how to
+acquire those hosts.
+
+GXP is run from a regular shell prompt. For those who have used prior
+versions of GXP, this has been changed in this version.
+
+@node Running commands via e command, Getting more hosts with use/explore commands, Testing Your Installation, Tutorial
+@section Running commands via e command
+Given you put gxpc in your PATH in one way or another, type
+the following to your shell prompt.
+@example
+$ gxpc e whoami
+@end example
+In this manual, @t{$} means a shell prompt, and is not a part of the input.
+
+You will see something like the following.
+@example
+$ gxpc e whoami
+gxpc: no daemon found, create one
+tau
+$
+@end example
+
+The @t{gxpc e} command lets GXP run whatever follows it, which is, in
+this example, @t{whoami}.  As you can see in the first line, a GXP
+``daemon'' is brought up, which takes the request to run @t{whoami}.
+GXP daemon stays running background.  Thus, if you issue another gxpc
+@t{e} command again, you will see result immediately this time.
+@example
+$ gxpc e whoami
+tau
+$ gxpc e uname
+Linux
+$
+@end example
+
+The daemon stays running even if you exit the shell or even logout.
+If you exit or logout and then run your shell or login again, the
+daemon should be still running.
+
+@t{gxpc quit} is the command to terminate the daemon.
+@example
+$ gxpc quit
+$
+@end example
+Issueing gxpc @t{e} command again, the daemon will bring up again, of course.
+@example
+$ gxpc e uname
+gxpc: no daemon found, create one
+Linux
+@end example
+
+A primitive way to check if the daemon is running is @t{ps} command. 
+For example,
+@example
+$ ps w 
+  PID TTY      STAT   TIME COMMAND
+ 9273 pts/1    S      0:00 /bin/bash --noediting -i
+ 9446 pts/1    S      0:00 python /home/tau/proj/gxp3/gxpd.py --no_stdin --redirect_stdout --redirect_stderr
+ 9486 pts/1    R      0:00 ps w
+@end example
+@t{gxpd.py} is the daemon running for you.
+
+Or you can run @t{gxpc prompt} command. 
+If no daemon is running, it does not print anything.
+If a daemon is running, it
+prints a short string indicating its status. For example,
+@example
+$ gxpc prompt
+[1/1/1]
+@end example
+We will detail the meaning of these three numbers ([1/1/1]) later.
+For now, remember @t{gxpc prompt} command as a way to check if the
+daemon is running.
+
+In general, @t{e} command will run any shell command on @i{all hosts
+selected for execution.} In this example, you only have one host,
+which is the local host you issued @t{gxpc} command on, and that node
+is selected. @xref{Getting more hosts with use/explore commands},
+for how to have more hosts and how to select a set of hosts for
+execution.
+
+@node Getting more hosts with use/explore commands, Introduction to SSH for GXP Users, Running commands via e command, Tutorial
+@section Getting more hosts with use/explore commands
+
+With GXP, you will probably want to use many hosts in parallel.  You
+need to have a host you can remote-login. In this example, we assume
+you are originally on host @t{hongo000} and you have another host,
+@t{hongo001}, which you can remote-login from @t{hongo000} via
+SSH. Furthermore, we assume you can do so without typing password
+every time you login @t{hongo001}. 
+@xref{Introduction to SSH for GXP Users}, if you are not familiar with necessary
+SSH setup to do so. For those who already know it, 
+you need to have public/private
+key pairs and either (1) use @t{ssh-agent} and @t{ssh-add} (@t{eval
+`ssh-agent` && ssh-add}) and input the phassphrase to @t{ssh-add}, 
+so SSH does not ask you it again (recommended), or
+(2) set the encryption passphrase of the private key empty.
+Though the method (2) uses secure public-key protocol for
+authentication, when your account on the host storing the private key
+is compromised, the intruder may be able to access other hosts
+via the private key.
+
+Either way, you should have an environment
+where something like the following silently succeeds without
+your password/passphrase being asked by SSH client.
+@example
+$ ssh hongo001 hostname
+hongo001
+$
+@end example
+You may use remote-execution commands other than SSH, 
+including RSH, QRSH, and QSUB as well as the local shell
+(sh) to spawn multiple daemons on a single host. 
+You can customize exact command lines used or even add
+your own custom rsh-like command in the repertoire.
+??? Explore Settings for Various Environment, 
+for details.
+
+Once you have such an environment, try the following to acquire hongo001.
+@example
+$ gxpc use ssh hongo000 hongo001
+$ gxpc explore hongo001
+reached : hongo001
+$
+@end example
+
+The first line reads ``@t{gxpc} [can] @t{use} @t{ssh} [from]
+@t{hongo000} [to login] @t{hongo001}.'' The second line instructs GXP to
+go ahead and really login @t{hongo001}. If @t{hongo000} and @t{hongo001}
+share your home directory, this command will not take much longer than
+the regular SSH. After the explore command has finished, issue an
+@t{e} command again. This time, you will see the command being
+executed on the two hosts.
+@example
+$ gxpc e hostname
+hongo000
+hongo001
+$
+@end example
+
+@t{gxpc stat} command shows hosts (daemons) connected.
+@example
+$ gxpc e hostname
+hongo000
+hongo001
+$
+@end example
+
+
+If you want to grab a third host, say @t{hongo002}, try the following.
+@example
+$ gxpc use ssh hongo000 hongo002
+$ gxpc explore hongo002
+reached : hongo002
+$ gxpc e hostname
+hongo000
+hongo001
+hongo002
+@end example
+
+You could continue this way, issueing @t{use} command and then @t{explore}
+command to get a single host at a time, but this is obviously not so
+comfortable if you have hundred hosts, say @t{hongo000} -- @t{hongo099}.
+The first trick to learn is that, both the second and the third
+arguments to @t{use} command are actually @i{regular expressions} of
+hostnames. Therefore, the following single line:
+@example
+$ gxpc use ssh hongo000 hongo0
+@end example
+says that ``@t{gxpc} [can] @t{use} @t{ssh} [from any host matching]
+@t{hongo000} [to login any host matching] @t{hongo0}.''  Note that any
+host that begins with @t{hongo0} matches the regular expression
+@t{hongo0}.
+
+Second, explore command can take multiple hostnames in a single
+command. For example, after the above command, you may grab three 
+hosts with a single stroke by:
+@example
+$ gxpc explore hongo003 hongo004 hongo005
+reached : hongo003
+reached : hongo004
+reached : hongo005
+$
+@end example
+
+By default, GXP won't grab the same host multiple times, so issuing
+the following once again will have no effect.
+@example
+$ gxpc explore hongo001
+$
+@end example
+
+If you have many hosts, this is still painful. An even better way
+is to use a special notation @t{[[@i{xxx}-@i{yyy}]]}, which represents
+a set of numbers between @i{xxx} and @i{yyy} (inclusive). So, 
+@example
+$ gxpc explore hongo[[000-014]]
+$
+@end example
+is equivalent to 
+@example
+$ gxpc explore hongo000 hongo001 hongo002 ... hongo014
+$
+@end example
+If you wish to exclude some hosts from the range, use a notation
+@t{;}@i{nnn} or @t{;}@i{nnn}@t{-}@i{mmm}. For example,
+@example
+$ gxpc explore hongo[[000-014;007]]
+$
+@end example
+will explore hongo000 ... hongo014 except for hongo007.
+@example
+$ gxpc explore hongo[[000-014;003-006]]
+$
+@end example
+will explore hongo000 ... hongo014 except for hongo003-hongo006.
+
+Since GXP gracefully handles (ignores) dead or non-existent hosts, you
+normally do not have to exclude every single non-working hosts this
+way, but doing so is sometimes useful to make explore faster.
+
+Instead of typing hostnames in a command line, you may have a file
+that lists targets and give it to explore command by 
+@t{--targetfile} or the shorter @t{-t} option.
+Let's say you have a file like the following.
+@example
+$ cat my_targets
+hongo[[000-014]]
+kashiwa[[000-009]]
+edo[[000-012]]
+@end example
+Then
+@example
+$ gxpc explore @t{-t my_targets}
+@end example
+is equivalent to
+@example
+$ gxpc explore hongo[[000-014]] kashiwa[[000-009]] edo[[000-012]]
+@end example
+
+Now you reached 15 hosts in total. The @t{stat} command shows 
+hosts (daemons) connected.
+
+@example
+$ gxpc stat
+/tmp/gxp-tau/gxpsession-hongo000-tau-2007-01-27-23-15-04-29004-97439271
+hongo000 (= hongo000-tau-2007-01-27-23-15-04-29004)
+ hongo007 (= hongo007-tau-2007-01-27-23-16-30-24842)
+ hongo001 (= hongo001-tau-2007-01-27-23-16-27-1205)
+ hongo013 (= hongo013-tau-2007-01-27-23-48-28-20179)
+ hongo014 (= hongo014-tau-2007-01-27-23-48-14-11435)
+ hongo005 (= hongo005-tau-2007-01-27-23-16-30-9412)
+ hongo006 (= hongo006-tau-2007-01-27-23-16-28-24083)
+ hongo003 (= hongo003-tau-2007-01-27-23-16-29-16040)
+ hongo002 (= hongo002-tau-2007-01-27-23-16-28-22077)
+ hongo008 (= hongo008-tau-2007-01-27-23-48-12-4070)
+ hongo012 (= hongo012-tau-2007-01-27-23-48-14-32519)
+ hongo010 (= hongo010-tau-2007-01-27-23-48-14-12066)
+ hongo011 (= hongo011-tau-2007-01-27-23-48-15-15126)
+ hongo009 (= hongo009-tau-2007-01-27-23-48-13-21582)
+ hongo004 (= hongo004-tau-2007-01-27-23-16-31-8776)
+$
+@end example
+
+The first line shows the name of @i{a session file}, which is
+explained later (??).  Below
+@t{hongo000}, @t{hongo001}--@t{hongo014} are indented by a single space,
+which means @t{hongo000} issued logins to all these hosts. This
+happened because we have previously said
+@example
+$ gxpc use ssh hongo000 hongo0
+@end example
+indicating that (only) @t{hongo000} can login @t{hongo0}.
+
+You can alternatively say
+@example
+$ gxpc use ssh hongo0 hongo0
+@end example
+indicating gxpc can use @t{ssh} from @t{any} host matching @t{hongo0}
+to any host matching @t{hongo0}. This can be abbreviated to:
+@example
+$ gxpc use ssh hongo0
+@end example
+In this case, @t{gxpc} will try to reach these hosts in a more
+load-balanced fashion. To see this let's quit and 
+try it again from the beginning.
+
+@example
+$ gxpc quit
+$ gxpc use ssh hongo0
+gxpc: no daemon found, create one
+$ gxpc explore -h /etc/hosts hongo00 hongo01[0-4]
+reached : hongo003
+reached : hongo008
+reached : hongo001
+reached : hongo004
+reached : hongo002
+reached : hongo005
+reached : hongo007
+reached : hongo006
+reached : hongo009
+reached : hongo013
+reached : hongo010
+reached : hongo011
+reached : hongo012
+reached : hongo014
+$ gxpc stat
+/tmp/gxp-tau/gxpsession-hongo000-tau-2007-01-28-00-10-51-311-66768183
+hongo000 (= hongo000-tau-2007-01-28-00-10-51-311)
+ hongo006 (= hongo006-tau-2007-01-28-00-10-33-29696)
+ hongo005 (= hongo005-tau-2007-01-28-00-10-35-13470)
+ hongo003 (= hongo003-tau-2007-01-28-00-10-34-16875)
+ hongo002 (= hongo002-tau-2007-01-28-00-10-33-27494)
+ hongo004 (= hongo004-tau-2007-01-28-00-10-36-9479)
+ hongo009 (= hongo009-tau-2007-01-28-00-10-33-21614)
+ hongo008 (= hongo008-tau-2007-01-28-00-10-31-4102)
+  hongo011 (= hongo011-tau-2007-01-28-00-10-34-15158)
+  hongo012 (= hongo012-tau-2007-01-28-00-10-33-32551)
+  hongo010 (= hongo010-tau-2007-01-28-00-10-33-12098)
+  hongo013 (= hongo015-tau-2007-01-28-00-10-34-20211)
+  hongo014 (= hongo014-tau-2007-01-28-00-10-34-11467)
+ hongo007 (= hongo007-tau-2007-01-28-00-10-35-26002)
+ hongo001 (= hongo001-tau-2007-01-28-00-10-32-1979)
+@end example
+
+The indentations indicate that @t{hongo008} issued logins to
+@t{hongo010}--@t{hongo014}. @t{hongo000} issued logins to @t{hongo001}
+--@t{hongo009}. In general, GXP daemons will form a tree.  By default,
+a single node tries to keep the number of its children no more than
+nine.
+
+@node Introduction to SSH for GXP Users, Quick Reference of Frequently Used Commands, Getting more hosts with use/explore commands, Tutorial
+@section Introduction to SSH for GXP Users
+todo
+
+@node Quick Reference of Frequently Used Commands,  , Introduction to SSH for GXP Users, Tutorial
+@section Quick Reference of Frequently Used Commands
+
+@itemize
+@item 
+@example
+@t{gxpc prompt}
+@end example
+will show a succinct summary of gxp status.  It is strongly
+recommended to put `gxpc prompt 2> /dev/null` 
+(note for the backquotes, not regular
+quotes) as part of your shell prompt. For example, if you are a bash
+user, put the following into your .bashrc.
+@example
+export PS1='\h:\W`gxpc prompt 2> /dev/null`% '
+@end example
+Then you will always see the succinct summary in your shell prompt. e.g.,
+@example
+$ export PS1='\h:\W`gxpc prompt 2> /dev/null`% '
+$ gxpc
+hongo:tmp[1/1/1]% 
+@end example
+
+'2> /dev/null' is to make gxpc silently exit if should be there any
+error.
+
+@item 
+@example
+@t{gxpc use} @i{rsh-name} @i{src} @i{target}
+@end example
+tells gxp it can login
+from @i{src} to @i{target} via @i{rsh-name}. 
+
+@item
+@example
+@t{gxpc explore} @i{target} ...
+@end example
+attempts to login specified @i{target}'s by methods specified by @t{use} 
+commands.
+There is a convenient notation to represent a set of targets. e.g.,
+@example
+$ gxpc explore hongo[[000-012]]
+@end example
+is equivalent to
+@example
+$ gxpc explore hongo000 hongo001 hongo002 ... hongo012
+@end example
+
+@item 
+@example
+@t{gxpc e} @i{whatever}
+@end example
+will run a shell command @i{whatever} on 
+all selected hosts. e.g.,
+
+@item 
+@example
+@t{gxpc cd} @i{[directory]}
+@end example
+will change the current directory of all selected hosts. 
+
+@item 
+@example
+@t{gxpc export} @i{VAR=VAL}
+@end example
+will set the environment variable for seqsequent commands. 
+
+@item 
+@example
+@t{gxpc smask}
+@end example
+will select the hosts on which the last command succeeded
+for the execution targets of subsequent commands.
+
+@item 
+@example
+@t{gxpc rmask}
+@end example
+will reset the selected hosts to all hosts.
+
+@item 
+@example
+@t{gxpc savemask} @i{name}
+@end example
+is similar to smask, but it remembers the set of selected hosts
+for future reference (by @t{-m} option of @t{gxpc e} commands).
+
+@item 
+@example
+@t{gxpc e} -m @i{name} @i{whatever}
+@end example
+is similar to @t{gxpc e} @i{whatever}, but runs @i{whatever} on
+hosts that have been set by @i{name} by @t{gxpc savemask} @i{name}.
+
+@item 
+@example
+@t{gxpc -m} @i{name} @t{cd} @i{[directory]}
+@t{gxpc -m} @i{name} @t{export} @i{VAR=VAL}
+@t{gxpc -m} @i{name} @t{e} @i{whatever}
+@end example
+@t{-m} can actually be written immediately after @t{gxpc}.
+
+@item 
+@example
+@t{gxpc e} -h @i{hostname} @i{whatever}
+@end example
+is similar to @t{gxpc e} @i{whatever}, but runs @i{whatever} on
+hosts whose names match regular expression @i{hostname}. 
+
+@item 
+@example
+@t{gxpc e} -H @i{hostname} @i{whatever}
+@end example
+is similar to @t{gxpc e} @i{whatever}, but runs @i{whatever} on
+hosts whose names do not match regular expression @i{hostname}. 
+
+@item 
+@example
+@t{gxpc -h} @i{name} @t{cd} @i{[directory]}
+@t{gxpc -h} @i{name} @t{export} @i{VAR=VAL}
+@t{gxpc -h} @i{name} @t{e} @i{whatever}
+@t{gxpc -H} @i{name} @t{cd} @i{[directory]}
+@t{gxpc -H} @i{name} @t{export} @i{VAR=VAL}
+@t{gxpc -H} @i{name} @t{e} @i{whatever}
+@end example
+Both @t{-h} and @t{-H} can actually be written immediately after @t{gxpc}.
+
+@item
+@example
+alias e='gxpc e'
+alias smask='gxpc smask'
+...
+@end example
+Finally, it is recommended to put aliases to some frequently used
+commands into your shell startup files, so that you do not need to
+type 'gxpc' everytime.
+
+
+@end itemize
+
+
+
+@node Using GXP make for Parallel Processing, GXP internals, Tutorial, Top
+@chapter Using GXP make for Parallel Processing
+
+@menu
+* GXP make::                    
+@end menu
+
+@node GXP make,  , Using GXP make for Parallel Processing, Using GXP make for Parallel Processing
+@section GXP make
+
+@node GXP internals,  , Using GXP make for Parallel Processing, Top
+@chapter GXP internals
+
+@menu
+* Files::                       
+@end menu
+
+@node Files,  , GXP internals, GXP internals
+@section Files
+
+There are the following files in the toplevel directory.  This is a bit
+messy and I like to make it cleaner some day.
+
+@itemize
+@item 
+@t{ioman.py} : main event handler
+@item 
+@t{gxpm.py} : definition of messages among gxpc and gxpd
+@item 
+@t{gxpd.py} : GXP daemon main program
+@item 
+@t{gxpc.py} : gxpc command core part
+@item 
+@t{gxpc} : gxpc command invoked by shell
+@item 
+@t{expectd.py} : implements explore command
+@item 
+@t{inst_remote_stub.py} : implements explore command
+@item 
+@t{inst_remote.py} : implements explore command
+@item 
+@t{inst_local.py} : implements explore command
+@item 
+@t{opt.py} : a small utility defining command line options
+@item 
+@t{ifconfig.py} : a small utility giving ifconfig-like function
+@item 
+@t{this_file.py} : a small utility giving path name of the program
+@item 
+@t{gxp_js.py} : implements js command
+@end itemize
+
+Among them, true ``core'' files are @t{ioman.py, gxpd.py,} and
+@t{gxpc.py}.  @t{gxpd.py} is the program running as a daemon, on your
+local host and remote hosts.  @t{ioman.py} implements an event handler
+loop used by @t{gxpd.py}.  @t{gxpc.py} is the core of the @t{gxpc}
+command you invoke.  @t{gxpc}, the command you actually invoke from your
+shell, is actually a very small program that does almost nothing but
+including @t{gxpc.py}.  Most of the functions you use when interacting
+with GXP start from somewhere in @t{gxpc.py}.
+
+
+gxpm.py is also very important in the sense that it
+defines the message format among daemons (gxpd.py) and frontend (gxpc)
+
+
+@chapter Command Reference
+
+#include cmdref.tex
+
+@chapter Tools Reference
+todo
+
+@chapter Troubleshooting
+todo
+
+@chapter Environment Variables Reference
+todo
+
+@chapter Key Stroke Reference
+todo
+
+@unnumberedsec Indices
+
+@menu
+* Function Index::              
+* Variable Index::              
+* Data Type Index::             
+* Program Index::               
+* Concept Index::               
+@end menu
+
+@unnumberedsec Function Index
+
+@printindex fn
+
+@unnumberedsec Variable Index
+
+@printindex vr
+
+@unnumberedsec Data Type Index
+
+@printindex tp
+
+@unnumberedsec Program Index
+
+@printindex pg
+
+@unnumberedsec Concept Index
+
+@printindex cp
+
+
+@contents
+
+@bye
+                                   
+

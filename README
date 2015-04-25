@@ -1,0 +1,13 @@
+'gxpc' in this directory is the command to access all functions of
+GXP. 
+
+Include this directory in your PATH, or simply make a symlink to gxpc
+from somewhere already in your PATH.
+
+  gxpc help
+
+will show you a help.
+
+Visit project web page http://www.logos.t.u-tokyo.ac.jp/gxp/ for more
+details.
+

@@ -1,0 +1,1449 @@
+#!/usr/bin/env python
+# Copyright (c) 2009 by Kenjiro Taura. All rights reserved.
+# Copyright (c) 2008 by Kenjiro Taura. All rights reserved.
+# Copyright (c) 2007 by Kenjiro Taura. All rights reserved.
+# Copyright (c) 2006 by Kenjiro Taura. All rights reserved.
+# Copyright (c) 2005 by Kenjiro Taura. All rights reserved.
+#
+# THIS MATERIAL IS PROVIDED AS IS, WITH ABSOLUTELY NO WARRANTY 
+# EXPRESSED OR IMPLIED.  ANY USE IS AT YOUR OWN RISK.
+# 
+# Permission is hereby granted to use or copy this program
+# for any purpose,  provided the above notices are retained on all 
+# copies. Permission to modify the code and to distribute modified
+# code is granted, provided the above notices are retained, and
+# a notice that the code was modified is included with the above
+# copyright notice.
+#
+# $Header: /cvsroot/gxp/gxp3/gxpbin/qsub_wrap,v 1.24 2012/07/04 14:46:14 ttaauu Exp $
+# $Name:  $
+#
+
+import base64,errno,fcntl,math,os,random,re
+import select,signal,socket,string,sys,time,types
+
+## import ifconfig
+
+## ---------------- BEGIN copy-pasted from ifconfig.py ----------------
+
+import fcntl,os,re,socket,string,sys
+
+try:
+    import ioman
+    # gxp3 directory is in your PYTHONPATH
+except ImportError,e:
+    # gxp3 directory not in your PYTHONPATH
+    # perhaps run as a standalone program
+    ioman = None
+
+def Ws(s):
+    sys.stdout.write(s)
+
+def Es(s):
+    sys.stderr.write(s)
+
+class ifconfig:
+    """
+    ifconfig().get_my_addrs() will return a list of
+    IP addresses of this host
+    """
+    def __init__(self):
+        self.v4ip_pat_str = "(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})"
+        self.v4ip_p = re.compile(self.v4ip_pat_str)
+        self.ifconfig_cmds = [ "LANG=C /sbin/ifconfig -a 2> /dev/null" ]
+
+    def parse_ip_addr(self, addr):
+        """
+        '12.34.56.78' --> (12,34,56,78)
+        """
+        m = re.match(self.v4ip_pat_str, addr)
+        if m is None: return None
+        A,B,C,D = m.group(1,2,3,4)
+        try:
+            return string.atoi(A),string.atoi(B),string.atoi(C),string.atoi(D)
+        except ValueError,e:
+            return None
+
+    def is_localhost_ip_addr(self, addr):
+        if addr == "127.0.0.1":
+            return 1
+        else:
+            return 0
+
+    def is_private_ip_addr(self, addr):
+        a,b,c,d = self.parse_ip_addr(addr)
+        if a == 192 and b == 168: return 1
+        if a == 172 and 16 <= b < 32: return 1
+        if a == 10: return 1
+        return 0
+
+    def is_global_ip_addr(self, addr):
+        if self.is_localhost_ip_addr(addr): return 0
+        if self.is_private_ip_addr(addr): return 0
+        return 1
+
+    def in_same_private_subnet(self, P, Q):
+        """
+        true when (1) both P and Q are private, and (2) they belong
+        to the same subnets.
+        """
+        if self.is_private_ip_addr(P) == 0: return 0
+        if self.is_private_ip_addr(Q) == 0: return 0
+        a,b,c,d = self.parse_ip_addr(P)
+        A,B,C,D = self.parse_ip_addr(Q)
+        if a == 192 and b == 168     and A == 192 and B == 168: return 1
+        if a == 172 and 16 <= b < 32 and A == 172 and 16 <= B < 32: return 1
+        if a == 10 and A == 10: return 1
+        return 0
+
+    def guess_connectable(self, P, Q):
+        """
+        P : address, Q : endpoint name.
+        (e.g.,
+        P = '133.11.238.3',
+        Q = ('tcp', (('157.82.246.104', '192.168.1.254'), 59098))
+        )
+        """
+        # consider * -> private is allowed
+        # Qas is like ('157.82.246.104', '192.168.1.254')
+        proto, (Qas, Qp) = Q            
+        Qa = Qas[0]
+        if self.is_global_ip_addr(Qa): return 1
+        # consider global -> private is blocked
+        if self.is_global_ip_addr(P): return 0
+        if self.in_same_private_subnet(P, Qa): return 1
+        return 0
+
+    def get_addr_of_if_by_proc(self, ifname):
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            result = fcntl.ioctl(s.fileno(), 0x8915, #SIOCGIFADDR
+                                 (ifname+'\0'*32)[:32])
+        except IOError:
+            s.close()
+            return None
+        s.close()
+        return socket.inet_ntoa(result[20:24])
+
+    def get_my_addrs_by_proc_net_dev(self):
+        dev = "/proc/net/dev"
+        if not os.path.exists(dev): return []
+        fp = open(dev, "rb")
+        # skip header(2 lines)
+        line = fp.readline()
+        line = fp.readline()
+        addrs = []
+        while 1:
+            line = fp.readline()
+            if line == "": break
+            # line looks like:
+            # "  eth0:323457502 5053463    0    0    0     0   ..."
+            ifname_rest = string.split(string.strip(line), ":", 1)
+            if len(ifname_rest) == 2:
+                addr = self.get_addr_of_if_by_proc(ifname_rest[0])
+                if addr is not None:
+                    addrs.append(addr)
+        fp.close()
+        return addrs
+
+    def get_my_addrs_by_ifconfig(self):
+        patterns = [ re.compile("inet addr:([\d|\.]+)"),
+                     re.compile("inet ([\d|\.]+)") ]
+        addrs = []
+        for c in self.ifconfig_cmds:
+            r = os.popen(c)
+            if ioman is None:
+                ifconfig_out = r.read()
+            else:
+                pr = ioman.primitive_channel_fd(r.fileno(), 1)
+                ifconfig_outs = []
+                while 1:
+                    l,err,msg = pr.read(1000)
+                    if l <= 0: break
+                    ifconfig_outs.append(msg)
+                ifconfig_out = string.join(ifconfig_outs, "")
+            for p in patterns:
+                found = p.findall(ifconfig_out)
+                if len(found) > 0: break
+            for addr in found:
+                if self.parse_ip_addr(addr) is not None:
+                    addrs.append(addr)
+            # ??? we got:
+            # "close failed: [Errno 9] Bad file descriptor"
+            # r.close()
+            # pr.close()
+            if len(addrs) > 0: return addrs
+        return []
+
+    def get_my_addrs_by_lookup(self):
+        hostname = socket.gethostname()
+        try:
+            can_name,aliases,ip_addrs = socket.gethostbyname_ex(hostname)
+        except socket.error,e:
+            return []
+        return ip_addrs
+        
+    def get_addr_prio(self, ip, prio):
+        """
+        prio: list of compiled regexps.
+        return the first index of regexp in prio
+        that match ip. if none match, return the 
+        length of the list.
+        hereby we give priority to ip
+        """
+        i = 0
+        for sign,regexp in prio:
+            if regexp in ("p", "P"):
+                m = self.is_private_ip_addr(ip)
+            elif regexp in ("g", "G"):
+                m = self.is_global_ip_addr(ip)
+            elif regexp in ("l", "L"):
+                m = self.is_localhost_ip_addr(ip)
+            else:
+                m = regexp.match(ip)
+            if (sign and m) or (sign == 0 and not m): return i
+            i = i + 1
+        return len(prio)
+
+    def sort_addrs(self, ip_addrs, addrs_prio):
+        """
+        addrs_prio is a list of regexps that will be
+        matched against ip_addrs
+
+        1. remove duplicates.
+        2. remove loopback addrs (127.0.0.1).
+        3. sort IP addresses.
+           global addrs first
+        """
+        a = {}
+        for ip in ip_addrs:
+            a[ip] = 1
+        to_sort = []
+        for ip in a.keys():
+            # p1 : primary priority
+            # p2 : secondary priority (127.0.0.1 has a lower prio)
+            # p3 : ip string itself (to avoid non-determinism)
+            p1 = self.get_addr_prio(ip, addrs_prio)
+            if self.is_localhost_ip_addr(ip):
+                p2 = 1
+            else:
+                p2 = 0
+            to_sort.append((p1, p2, ip))
+        to_sort.sort()
+        sorted_ip_addrs = []
+        for _,_,ip in to_sort:
+            sorted_ip_addrs.append(ip)
+        return sorted_ip_addrs
+
+    def get_my_addrs_aux(self):
+        """
+        get my ip address the clients are told to connect to.
+
+        addr_filters is a list of strings, each of which is the form
+
+           +REGEXP
+           -REGEXP
+           REGEXP   (equivalent to +REGEXP)
+        """
+        # look at /proc/net/dev on Linux
+        A = self.get_my_addrs_by_proc_net_dev()
+        if len(A) > 0: return A
+        # use ifconfig command
+        A = self.get_my_addrs_by_ifconfig()
+        if len(A) > 0: return A
+        # second by looking up my hostname
+        A = self.get_my_addrs_by_lookup()
+        if len(A) > 0: return A
+        return []
+
+    def get_my_addrs(self, addr_prio):
+        addrs = self.get_my_addrs_aux()
+        return self.sort_addrs(addrs, addr_prio)
+
+    def compile_prio(self, addr_prio_str):
+        prio = []
+        for pat in string.split(addr_prio_str, ","):
+            pat = string.strip(pat)
+            if pat == "": continue
+            if pat[0] == "+":
+                sign = 1
+                pat = pat[1:]
+            elif pat[0] == "-":
+                sign = 0
+                pat = pat[1:]
+            else:
+                sign = 1
+
+            if pat in ("p", "P", "g", "G", "l", "L"):
+                c = pat
+            else:
+                try:
+                    c = re.compile(pat)
+                except re.error,e:
+                    msg = ("invalid addr_prio %s in %s %s"
+                           % (pat, addr_prio_str, e.args))
+                    return None,msg
+            prio.append((sign, c))
+        return prio,None
+
+ifobj = ifconfig()
+
+def get_my_addrs(addr_prio):
+    return ifobj.get_my_addrs(addr_prio)
+
+def compile_prio(addr_prio_str):
+    return ifobj.compile_prio(addr_prio_str)
+
+def main():
+    prio_str = ""
+    if len(sys.argv) > 1:
+        prio_str = sys.argv[1]
+    prio,msg = compile_prio(prio_str)
+    if prio is None:
+        Es("%s\n" % msg)
+        return 1
+    addrs = get_my_addrs(prio)
+    Ws("%s\n" % string.join(addrs, " "))
+
+# if __name__ == "__main__":
+#     sys.exit(main())
+
+## ---------------- END copy-pasted from ifconfig.py ----------------
+
+
+## import opt
+## ---------------- BEGIN copy-pasted from opt.py ----------------
+
+import copy,getopt,os,string,sys
+
+class cmd_opts:
+    """
+    simple command line parser.
+    usage:
+      1. inherit this class (class xxx_cmd_opts(cmd_opts): ...)
+      2. define __init__ function (see below for details).
+      3. o = xxx_cmd_opts()
+         if o.parse(args) == 0:
+            OK
+         else:
+            ERROR
+
+      4. if o.parse returns zero, then you have options in fields of o.
+
+    __init__ method should define fields that correspond to options.
+    e.g.,
+
+    def __init__(self):
+        self.xyz = ...
+        self.abc = ...
+
+    this says, this accepts options --xyz and --abc.
+
+    type and default values of each option can be specified by the value.
+    
+        self.xyz = ("i", 10)
+
+    says xyz should be an integer and its default value is 10. types
+    supported are:
+      
+        s or s* : string
+        i or i* : int
+        f or f* : float
+        None    : flag (no arg)
+
+        for s, i, f, and None, if the same option occurs multiple times
+        in the arg list, the last value overwrites all previous values.
+        so, --xyz 1 --xyz 2 will have the same effect as --xyz 2.
+
+        for s*, i*, f*, all values are put in a list.
+
+        if you want to have the single character option of the same
+        option (e.g., if -n is a synonym for --no_exec), you can say this
+        by
+
+        self.n = "no_exec"
+
+    a complete example of __init__:
+
+        self.abc = ("i", 0)
+        self.pqr = ("f", 1.0)
+        self.xyz = ("s", "hello")
+        self.abcd = ("i*", [])
+        self.pqrs = ("f*", [])
+        self.xyzw = ("s*", [])
+        self.hoge = (None, 0)
+        self.a = "abc"
+        self.p = "pqr"
+        self.x = "xyz"
+
+    if you need a postcheck for validity of arguments, define postcheck()
+    so that it return zero on success and -1 otherwise.
+    
+    
+    """
+    def __init__(self):
+        # (type, default)
+        # types supported
+        #   s : string
+        #   i : int
+        #   f : float
+        #   l : list of strings
+        #   None : flag
+        self.specified_fields = {}
+    
+    def parse(self, argv):
+        short,long = self.get_options()
+        try:
+            opts,args = getopt.getopt(argv, short, long)
+        except getopt.error,e:
+            self.Es("%s\n" % e.args[0])
+            return -1
+        for opt,arg in opts:
+            if self.setopt(opt, arg) == -1: return -1
+        if self.finalize_opts() == -1: return -1
+        self.args = args
+        return 0
+
+    def get_options(self):
+        """
+        return things passed getopt
+        """
+        long_opts = []
+        short_opts = []
+        for o in self.__dict__.keys():
+            if o == "specified_fields":
+                continue
+            elif len(o) == 1:
+                long_o = getattr(self, o) # p -> parent
+                typ,default = getattr(self, long_o)
+                if typ is None:         # no arg   (-h)
+                    short_opts.append(o)
+                else:                   # want arg (-f file)
+                    short_opts.append("%s:" % o)
+            else:
+                typ,default = getattr(self, o)
+                if typ is None:         # no arg   (--help)
+                    long_opts.append("%s" % o)
+                else:                   # want arg (--file file)
+                    long_opts.append("%s=" % o)
+        return string.join(short_opts),long_opts
+            
+    def Es(self, s):
+        os.write(2, s)
+
+    def safe_atoi(self, s, defa):
+        try:
+            return string.atoi(s)
+        except ValueError:
+            return defa
+
+    def safe_atof(self, s, defa):
+        try:
+            return string.atof(s)
+        except ValueError:
+            return defa
+
+    def setopt(self, o, a):
+        if len(o) == 2:                 # -h
+            field = getattr(self, o[1:])
+        else:                           # --help
+            field = o[2:]
+        typ,val = getattr(self, field)
+        # type check
+        if typ is None:
+            x = 1
+        elif typ[0] == "i":             # int option
+            x = self.safe_atoi(a, None)
+            if x is None:
+                self.Es("invalid argument for %s (%s)\n" % (o, a))
+                return -1
+        elif typ[0] == "f":             # float option
+            x = self.safe_atof(a, None)
+            if x is None:
+                self.Es("invalid argument for %s (%s)\n" % (o, a))
+                return -1
+        elif typ[0] == "s":
+            x = a
+        else:
+            bomb()
+
+        if typ is None or len(typ) == 1:
+            setattr(self, field, (typ,x))
+        else:
+            assert len(typ) == 2, typ
+            assert typ[1] == "*", typ
+            val.append(x)
+        self.specified_fields[field] = 1
+        return 0
+
+    def finalize_opts(self):
+        for o in self.__dict__.keys():
+            if o == "specified_fields":
+                continue
+            elif len(o) > 1:              # strip things like 'h'
+                typ,val = getattr(self, o)
+                setattr(self, o, val)
+        return self.postcheck()
+
+    def postcheck(self):
+        return 0                        # OK
+
+    def copy(self):
+        return copy.deepcopy(self)
+
+    def __str__(self):
+        A = []
+        for x,v in self.__dict__.items():
+            A.append(("%s : %s" % (x, v)))
+        return string.join(A, "\n")
+
+
+
+## ---------------- END copy-pasted from opt.py ----------------
+
+"""
+qsub_wrap: a simple program that runs a command with a qsub-like
+command and connects its stdin/stdout/stderr with this process.
+e.g.,
+
+  qsub_wrap --sys torque hostname
+"""
+
+dbg = 0
+
+def Es(s):
+    sys.stderr.write(s)
+    sys.stderr.flush()
+
+def Ws(s):
+    sys.stdout.write(s)
+    sys.stdout.flush()
+
+class qsub_wrap_server_cmd_opts(cmd_opts):
+    def __init__(self):
+        #             (type, default)
+        # types supported
+        #   s : string
+        #   i : int
+        #   f : float
+        #   l : list of strings
+        #   None : flag
+        cmd_opts.__init__(self)
+        self.sys        = ("s", "guess")  # sge,torque,pbs,nqs
+        self.qsub       = ("s", None)
+        self.qstat      = ("s", None)
+        self.qdel       = ("s", None)
+        self.timeout    = ("f", 150.0)  # "" means infty
+        self.bringup_timeout           = ("f", 2.0)
+        self.display_progress_interval = ("f", 20.0)
+        self.taskset = ("s", None)
+        self.leave_output = (None, 0)
+        self.export     = ("s*", [])
+        self.qarg       = ("s*", [])
+        self.addr       = ("s", "")
+        self.hostname   = ("s", None) # name the client should connect back to
+        self.python     = ("s", "python")
+        self.dbg        = ("i", 0)
+        # historical stuff
+        # self.qsub_stdin = ("i", 0)      # 1 if qsub takes stdin
+        # self.script     = ("s", None)
+        # self.sync       = (None, 0)
+        # self.x       = "qarg"
+
+    def postcheck(self):
+        exports = []
+        for x in self.export:
+            var_val = string.split(x, "=", 1)
+            if len(var_val) != 2:
+                Es("qsub_wrap : invalid arg to --export (must be var=val)\n")
+                return -1
+            [ var, val ] = var_val
+            exports.append((var, val))
+        self.export = exports
+
+        prio,msg = compile_prio(self.addr)
+        if prio is None:
+            Es("qsub_wrap : %s\n" %  msg)
+            return -1
+        self.addr = prio
+        return 0
+            
+class torque_system_option:
+    """
+    standard, open-source version of torque
+    """
+    def __init__(self):
+        self.name = "torque"
+        self.qsub_pattern = re.compile("[^\d]*(?P<job_id>\d+\..*)")
+        self.qstat_trust_status = 1
+        self.qstat_pattern = None # define it when trust_status = 0
+        self.qstat_job_id_flag = "-r"
+        self.qsub_stdout_flag = "-o"
+        self.qsub_stderr_flag = "-e"
+        self.qsub_shell_arg = [ "-S", "/bin/sh" ]
+        self.qsub = "qsub"
+        self.qstat = "qstat"
+        self.qdel = "qdel"
+
+class torque_psched_system_option:
+    """
+    standard, open-source version of torque
+    """
+    def __init__(self):
+        self.name = "torque_psched"
+        self.qsub_pattern = re.compile("tmsub: child task (?P<job_id>\d+) generated")
+        self.qstat_trust_status = 1
+        self.qstat_pattern = None # define it when trust_status = 0
+        self.qstat_job_id_flag = None
+        self.qsub_stdout_flag = None
+        self.qsub_stderr_flag = None
+        self.qsub_shell_arg = []
+        self.qsub = "tmsub"
+        self.qstat = None
+        self.qdel = None
+
+class nqs_fujitsu_system_option:
+    """
+    fujitsu NQS
+    """
+    def __init__(self):
+        self.name = "nqs_fujitsu"
+        self.qsub_pattern = re.compile(".*Request (?P<job_id>\d+\..*) submitted to queue:", re.DOTALL)
+        self.qstat_trust_status = 0
+        self.qstat_pattern = "%job_id%.+(RUNNING|QUEUED)"
+        self.qstat_job_id_flag = "-r"
+        self.qsub_stdout_flag = "-o" 
+        self.qsub_stderr_flag = "-e"
+        # self.qsub_no_output_arg = [ "-o", "/dev/null", "-e", "/dev/null" ]
+        self.qsub_shell_arg = [ "-s", "/bin/sh" ]
+        self.qsub = "qsub"
+        self.qstat = "qstat"
+        self.qdel = "qdel"
+        # self.qsub_stdin = 0     # 1
+
+class lsf_system_option:
+    """
+    LSF  (thanks to Dr. Daisuke Kawahara @ Kyoto University)
+    """
+    def __init__(self):
+        self.name = "lsf"
+        self.qsub_pattern = re.compile(".*Job <(?P<job_id>\d+)> is submitted to queue", re.DOTALL)
+        self.qstat_trust_status = 0
+        self.qstat_pattern = "\n%job_id%.+(RUN|PEND)"
+        self.qstat_job_id_flag = None
+        self.qsub_stdout_flag = "-o" 
+        self.qsub_stderr_flag = "-e"
+        # self.qsub_no_output_arg = [ "-o", "/dev/null", "-e", "/dev/null" ]
+        self.qsub_shell_arg = []
+        self.qsub = "qsub"
+        self.qstat = "qjobs"
+        self.qdel = "qkill"
+        # self.qsub_stdin = 0     # 1
+
+class nqs_hitachi_system_option:
+    """
+    hitachi NQS
+    """
+    def __init__(self):
+        self.name = "nqs_hitachi"
+        self.qsub_pattern = re.compile(".*Request (?P<job_id>\d+\..*) submitted to queue:", re.DOTALL)
+        self.qstat_trust_status = 0
+        self.qstat_pattern = "\n%job_id%"
+        self.qstat_job_id_flag = None
+        self.qsub_stdout_flag = "-o" 
+        self.qsub_stderr_flag = "-e"
+        # self.qsub_no_output_arg = [ "-o", "/dev/null", "-e", "/dev/null" ]
+        self.qsub_shell_arg = [ "-s", "/bin/sh" ]
+        self.qsub = "qsub"
+        self.qstat = "qstat"
+        self.qdel = "qdel"
+        # self.qsub_stdin = 0     # 1
+
+class sge_system_option:
+    """
+    standard open source sge
+    """
+    def __init__(self):
+        self.name = "sge"
+        self.qsub_pattern = re.compile(".*Your job (?P<job_id>\d+) .* has been submitted", re.DOTALL)
+        self.qstat_trust_status = 1
+        self.qstat_pattern = None
+        self.qstat_job_id_flag = "-j"
+        self.qsub_stdout_flag = "-o"
+        self.qsub_stderr_flag = "-e"
+        # self.qsub_no_output_arg = [ "-o", "/dev/null", "-e", "/dev/null" ]
+        self.qsub_shell_arg = [ "-S", "/bin/sh" ]
+        self.qsub = "qsub"
+        self.qstat = "qstat"
+        self.qdel = "qdel"
+        # self.qsub_stdin = 0     # 1
+        
+class n1ge_system_option:
+    """
+    titech n1ge
+    """
+    def __init__(self):
+        self.name = "n1ge"
+        self.qsub_pattern = re.compile(".*Your job (?P<job_id>\d+) .* has been submitted", re.DOTALL)
+        self.qstat_trust_status = 0
+        self.qstat_pattern = "\njob_number:\s+%job_id%"
+        self.qstat_job_id_flag = "-j"
+        self.qsub_stdout_flag = "-sgeout"
+        self.qsub_stderr_flag = "-sgeerr"
+        # self.qsub_no_output_arg = [ "-sgeout", "/dev/null", "-sgeerr", "/dev/null" ]
+        self.qsub_shell_arg = []
+        self.qsub = "qsub"
+        self.qstat = "qstat"
+        self.qdel = "qdel"
+        # self.qsub_stdin = 0
+        
+class condor_system_option:
+    """
+    condor
+    """
+    def __init__(self):
+        self.name = "condor"
+        self.qsub_pattern = re.compile(".* submitted to cluster (?P<job_id>\d+)", re.DOTALL)
+        self.qstat_trust_status = 0
+        self.qstat_pattern = "\n\s+%job_id%"
+        self.qstat_job_id_flag = None
+        self.qsub_stdout_flag = None
+        self.qsub_stderr_flag = None
+        self.qsub_shell_arg = []
+        self.qsub = "consub"
+        self.qstat = "condor_q"
+        self.qdel = "condor_rm"
+        # self.qsub_stdin = 0
+
+class pjsub_system_option:
+    def __init__(self):
+        self.name = "pjsub"
+        self.qsub_pattern = re.compile(".* PJM [^ ]* pjsub Job (?P<job_id>\d+) submitted", re.DOTALL)
+        self.qstat_trust_status = 0
+        self.qstat_pattern = "\n%job_id%"
+        self.qstat_job_id_flag = None
+        self.qsub_stdout_flag = "-o"
+        self.qsub_stderr_flag = "-e"
+        self.qsub_shell_arg = []
+        self.qsub = "pjsub"
+        self.qstat = "pjstat"
+        self.qdel = "pjdel"
+        
+        
+class qsub_wrap_server:
+    def usage(self):
+
+        Es(r"""usage (server mode):
+
+  qsub_wrap [options*] [--qarg arg]* command ...
+
+Options: 
+  --sys BATCH_QUEUEING_SYSTEM (choice: sge/torque/pbs, default=sge):
+      specifies batch queueing system. it is either sge, torque, or pbs.
+      default is sge.
+  --qsub QSUB_PATH (default=qsub):
+      specifies qsub command name in your $PATH environment or the full path of qsub.
+  --qstat QSAT_PATH (default=qstat):
+      specifies qstat command name in your $PATH environment or the full path of qstat.
+  --qdel QDEL_PATH (default=qdel):
+      specifies qdel command name in your $PATH environment or the full path of qdel.
+  --timeout sec (default=50.0):
+      specifies the time the server waits for the remote command
+      to connect to it, including queueing delays
+  --bringup_timeout sec (default=2.0):
+      specifies the time the server waits for the remote command
+      to connect to it, from the point the job has been dispatched somewhere.
+  --display_progress_interval (default=10.0):
+      specifies the interval between displaying "waiting for connection" msg
+  --taskset path_to_taskset (default: 0)
+      bind the process to one proc, using taskset command on the node
+  --script FILENAME :
+      generate script file submitted to qsub as FILENAME.
+  --leave_output :
+      leave stdout/stderr of the job
+  --addr REGEXP :
+      specify address or hostname used as the connection target to
+      this host. by default, hostname (obtained by socket.gethostname())
+      is used. if you specify one, hostname or IP address matching REGEXP
+      ise used.
+  --dbg LEVEL (choice: 0/1/2, default=0)
+      specifies debug level.
+
+  -- : 
+      whatever follows '--' in the command line is given to qsub.
+
+In sumary, the following is a possible command line to run SGE qsub.
+export PYTHONPATH=..  (include GXP_DIR, where GXP_DIR is the gxp3 toplevel dir)
+
+qsub_wrap hostname
+
+
+""")
+
+    def set_dbg(self, opt):
+        global dbg
+        dbg = opt.dbg
+
+    def add_default_qarg(self, add_args):
+        self.opt.qarg = self.opt.qarg + add_args
+    
+    def set_system_options(self, opt):
+        sys = string.lower(opt.sys)
+        self.sys_options = { "sge"    : sge_system_option(),
+                             "torque" : torque_system_option(),
+                             "torque_psched" : torque_psched_system_option(),
+                             "condor" : condor_system_option(),
+                             "n1ge"   : n1ge_system_option(),
+                             "nqs_hitachi" : nqs_hitachi_system_option(),
+                             "lsf" : lsf_system_option(),
+                             "nqs_fujitsu" : nqs_fujitsu_system_option(),
+                             "pjsub"  : pjsub_system_option(),
+                             }
+        if sys == "guess":
+            self.sys_opt = None         # unknown
+        elif self.sys_options.has_key(sys):
+            self.sys_opt = self.sys_options[sys]
+            self.config_system_options(self.sys_opt)
+        else:
+            Es("%s : wrong sys name %s (must be one of %s)\n" \
+               % (self.cmd, sys, self.sys_options.keys()))
+            return -1
+
+    def config_system_options(self, sys_opt):
+        if self.opt.qsub is None: self.opt.qsub = sys_opt.qsub
+        if self.opt.qstat is None: self.opt.qstat = sys_opt.qstat
+        if self.opt.qdel is None: self.opt.qdel = sys_opt.qdel
+        if 0:
+            if self.opt.qsub_stdin is None: 
+                self.opt.qsub_stdin = sys_opt.qsub_stdin
+        self.add_default_qarg(sys_opt.qsub_shell_arg)
+        return 0
+
+    def set_connect_addr(self, host, addr_prio):
+        # imported here because we don't like to bother client
+        # by PYTHONPATH
+        if host is not None:
+            self.connect_addr = host
+            return 0
+        import ifconfig2
+        addrs = ifconfig2.get_my_addrs(addr_prio)
+        if len(addrs) == 0:
+            Es("%s : could not get addrs matching filters %s\n" \
+               % (self.cmd, addr_prio))
+            return -1
+        self.connect_addr = addrs[0]
+        return 0
+    
+    def init(self, argv):
+        self.port = None
+        self.READ_SZ = 1024 * 1024
+        self.cmd = os.path.realpath(argv[0])
+        self.opt = qsub_wrap_server_cmd_opts()
+        qsub_wrap_args = []
+        qsub_args = []
+        args = [ qsub_wrap_args, qsub_args ]
+        for a in argv[1:]:
+            if a == "--":
+                args = [ args[1], args[0] ]
+            else:
+                args[0].append(a)
+        if self.opt.parse(qsub_wrap_args) == -1:
+            self.usage()
+            return -1
+        if len(self.opt.args) != 1:
+            self.usage()
+            return -1
+        if self.set_system_options(self.opt) == -1:
+            self.usage()
+            return -1
+        self.opt.qarg = self.opt.qarg + qsub_args
+        self.hostname = socket.gethostname()
+        if self.set_connect_addr(self.opt.hostname, self.opt.addr) == -1:
+            return -1
+        self.set_dbg(self.opt)
+        self.job_id = None
+        self.job_in_queue = 0
+        self.files_to_remove = []
+        self.script_filename = None
+        self.stdout_filename = None
+        self.stderr_filename = None
+
+    def open_server_socket(self):
+        # create a socket to listen on
+        so = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        so.bind(("", 0))
+        _,port = so.getsockname()
+        so.listen(3)
+        return so,port
+
+    def popen(self, args, exports):
+        """
+        like popen, but returns everything (pid,stdin,stdout,stderr),
+        all in raw integers
+        """
+        in_r, in_w  = os.pipe()
+        out_r,out_w = os.pipe()
+        err_r,err_w = os.pipe()
+        pid = os.fork()
+        if pid == 0:
+            # read in. write out/err.
+            os.close(in_w)
+            os.close(out_r)
+            os.close(err_r)
+            os.dup2(in_r, 0)
+            os.dup2(out_w, 1)
+            os.dup2(err_w, 2)
+            self.extend_env(exports)
+            for fd in [ in_r, out_w, err_w ]:
+                if fd > 2: os.close(fd)
+            try:
+                os.execvp(args[0], args)
+            except OSError,e:
+                Es("%s : %s (%s) : could not exec %s %s\n" \
+                   % (self.cmd, self.hostname, self.connect_addr,
+                      args, e.args))
+                os._exit(255)
+        else:
+            os.close(in_r)
+            os.close(out_w)
+            os.close(err_w)
+            return pid,in_w,out_r,err_r
+
+    def readall(self, fd):
+        fp = os.fdopen(fd, "rb")
+        content = fp.read()
+        fp.close()
+        return content
+        
+    def system(self, args, stdin_input, exports):
+        if dbg>=2:
+            Es("%s : running %s\n" % (self.cmd, args))
+        pid,stdin,stdout,stderr = self.popen(args, exports)
+        wp = os.fdopen(stdin, "wb")
+        wp.write(stdin_input)
+        wp.close()
+        stdout_output = self.readall(stdout)
+        stderr_output = self.readall(stderr)
+        qid,status = os.waitpid(pid, 0)
+        assert pid == qid, (pid, qid, status)
+        if dbg>=2:
+            Es("%s : status = %s %s\n" % (self.cmd, status, args))
+        if os.WIFEXITED(status):
+            return os.WEXITSTATUS(status),stdout_output,stderr_output
+        else:
+            return 1,stdout_output,stderr_output
+
+    def extend_env(self, exports):
+        for var,val in exports:
+            os.environ[var] = os.path.expandvars(val)
+    
+    def kick_qsub(self):
+        args = [ self.opt.qsub ] + self.opt.qarg
+        if self.sys_opt.qsub_stdout_flag is not None:
+            args.append(self.sys_opt.qsub_stdout_flag)
+            args.append("/dev/null")
+        if self.sys_opt.qsub_stderr_flag is not None:
+            args.append(self.sys_opt.qsub_stderr_flag)
+            args.append("/dev/null")
+        r,stdout_output,stderr_output = self.system(args, ":",
+                                                    self.opt.export)
+        # Es("kicked qsub %s %s %s\n" % (r,stdout_output,stderr_output))
+
+    def search_job_id_from_qsub_output(self, qsub_output):
+        if self.sys_opt is None:
+            sys_options = self.sys_options.values()
+        else:
+            sys_options = [ self.sys_opt ]
+
+        for sys_opt in sys_options:
+            if dbg>=2:
+                Es("%s : matching qsub output (%s) to pattern of %s\n" \
+                   % (self.cmd, qsub_output, sys_opt.name))
+            m = sys_opt.qsub_pattern.match(qsub_output)
+            if m is not None: return sys_opt,m
+        return None,None
+        
+    def script_directory(self):
+        """
+        return a directory in which we create script files
+        """
+        u = os.getenv("USER")
+        if u is None: u = ("%08d" % os.getuid())
+        c = os.getenv("HOME")
+        if c is None: c = os.getcwd()
+        directory = os.path.join(c, (".qsub_wrap_scripts_%s" % u))
+        return directory
+        
+        
+    def ensure_tmp_directory(self):
+        directory = self.script_directory()
+        if self.safe_makedirs(directory, 0777) == -1:
+            return None
+        else:
+            return directory
+    
+    def safe_mkdir(self, directory, mode):
+        if os.path.exists(directory): return
+        try:
+            if mode is None:
+                os.mkdir(directory)
+            else:
+                os.mkdir(directory, mode)
+        except OSError,e:
+            if e.args[0] != errno.EEXIST:
+                Es("%s : %s\n" % (self.cmd, e.args))
+                return -1               # NG
+        return 0                        # OK
+
+    def safe_makedirs(self, directory, mode):
+        head,tail = os.path.split(directory)
+        if head != directory:
+            # this really talks about anythin but root or ''
+            if self.safe_makedirs(head, mode) == -1:
+                return -1
+            return self.safe_mkdir(directory, mode)
+
+    def mk_stdout_stderr_names(self):
+        directory = self.ensure_tmp_directory()
+        if directory is None: return None,None
+	stdout = os.path.join(directory, "o")
+	stderr = os.path.join(directory, "e")
+	return stdout,stderr
+
+    def mk_tmp_files(self):
+        """
+        return script,write_fd_to_script,stdout_filename,stderr_filename
+        """
+        directory = self.ensure_tmp_directory()
+        if directory is None: return None,None,None,None,None
+        for i in range(0, 10):
+            t = int(math.floor(time.time() * 1000000.0) % 100000000.0)
+            seq = random.randint(0, 999999)
+            pid = os.getpid()
+            scrip = "qsub_wrap_script_%04d_%08d_%06d" % (pid, t, seq)
+            script = os.path.join(directory, scrip)
+            qsub_clien = "qsub_wrap_client_%04d_%08d_%06d" % (pid, t, seq)
+            qsub_client = os.path.join(directory, qsub_clien)
+            stdou = "qsub_wrap_stdout_%04d_%08d_%06d" % (pid, t, seq)
+	    stdout = os.path.join(directory, stdou)
+            stder = "qsub_wrap_stderr_%04d_%08d_%06d" % (pid, t, seq)
+	    stderr = os.path.join(directory, stder)
+            # create directory
+            try:
+                fd = os.open(script, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
+            except OSError,e:
+                if e.args[0] == errno.EEXIST:
+                    continue
+                else:
+                    raise
+            return script,qsub_client,os.fdopen(fd, "wb"),stdout,stderr
+        Es("%s : could not make temporary script in %s\n" % (self.cmd, directory))
+        return None,None,None,None,None
+
+    def get_qsub_wrap_content(self):
+        cmd = "%s_client" % self.cmd
+        fp = open(cmd, "rb")
+        content = fp.read()
+        fp.close()
+        return content
+        
+    def run_qsub_process(self, addr, port, hello):
+        """
+        run qsub and obtain its job id
+        """
+        if self.opt.taskset and self.opt.taskset != "0":
+            if self.opt.taskset == "1":
+                taskset = "taskset"
+            else:
+                taskset = self.opt.taskset
+            taskset = "--taskset %s" % taskset
+        else:
+            taskset = ""
+
+        script,client,wp,stdout,stderr = self.mk_tmp_files()
+
+        client_cmd = self.opt.args[0]
+        base64_client_cmd = base64.encodestring("%r" % client_cmd)
+        qsub_wrap_content = self.get_qsub_wrap_content()
+        python = self.opt.python
+        script_content = ("#!/bin/sh\n"
+                          "cat <<EOFEOFEOF > %s\n"
+                          "%s\n"
+                          "EOFEOFEOF\n"
+                          "%s %s --connect_to %s:%s --hello %s %s"
+                          " --base64cmd '%s'\n"
+                          % (client, qsub_wrap_content, python, client,
+                             addr, port, hello, taskset, base64_client_cmd))
+        
+        args = [ self.opt.qsub ] + self.opt.qarg
+	# generate script
+        if wp is None: return None
+        assert type(script) is types.StringType
+        wp.write(script_content)
+        wp.close()
+        os.chmod(script, 0755)
+        if dbg>=2:
+            Es("%s : script file %s created\n" % (self.cmd, script))
+        # arrange them to be finally removed 
+        if self.opt.leave_output == 0:
+            self.files_to_remove.append(script)
+            self.files_to_remove.append(client)
+            self.files_to_remove.append(stdout)
+            self.files_to_remove.append(stderr)
+        self.script_filename = script
+        self.stdout_filename = stdout
+        self.stderr_filename = stderr
+        stdin_content = ""
+
+        # add "-o file -e file" thing
+        if self.sys_opt.qsub_stdout_flag is not None:
+            args.append(self.sys_opt.qsub_stdout_flag)
+            args.append(stdout)
+        if self.sys_opt.qsub_stderr_flag is not None:
+            args.append(self.sys_opt.qsub_stderr_flag)
+            args.append(stderr)
+        # the last argument to qsub is the script name
+        args.append(script)
+        # finally send the job
+        r,stdout_output,stderr_output = self.system(args, stdin_content,
+                                                    self.opt.export)
+        Es(stderr_output)
+        Es(stdout_output)
+            
+        if r == 0:
+            # qsub says "Your job xxxx has been submitted", upon
+            # successful queueing
+            # m = self.qsub_pattern.match(stdout_output)
+            sys_opt,m = self.search_job_id_from_qsub_output(stdout_output)
+            if m is None:
+                sys_opt,m = self.search_job_id_from_qsub_output(stderr_output)
+            if m is None and self.sys_opt is not None:
+                Es(("%s : %s (%s) : could not obtain job id from output (%s). "
+                    "perhaps no or wrong --sys argument?\n"
+                    "cmd = %s\n"
+                    % (self.cmd, self.hostname, self.connect_addr,
+                       string.strip(stdout_output), args)))
+                return None
+            elif m is None and self.sys_opt is None:
+                Es(("%s : %s (%s) : could not guess job id from output (%s).\n"
+                    "cmd = %s\n"
+                    % (self.cmd, self.hostname, self.connect_addr,
+                       string.strip(stdout_output), args)))
+                return None
+            # now we got a job_id
+            # set the name of the system that has done the right job
+            if self.sys_opt is None:
+                self.sys_opt = sys_opt
+                self.config_system_options(sys_opt)
+            self.job_id = m.group("job_id")
+            self.job_in_queue = 1
+            if dbg>=1:
+                Es(("%s : %s (%s) : job id = %s\n" 
+                    % (self.cmd, self.hostname, self.connect_addr,
+                       self.job_id)))
+            return self.job_id
+        else:
+            Es(("%s : %s (%s) : submission appears to have failed (status=%d)\n" 
+                "cmd = %s\n")
+               % (self.cmd, self.hostname, self.connect_addr, r, args))
+            return None
+
+    def check_job_in_queue(self):
+        if self.opt.qstat is None:
+            # treat as if the job is still in the queue
+            return 1,"","",[]
+        if self.sys_opt.qstat_job_id_flag is None:
+            qstat_args = [ self.opt.qstat, self.job_id ]
+        else:
+            qstat_args = [ self.opt.qstat, 
+                           self.sys_opt.qstat_job_id_flag, self.job_id ]
+        r,stdout_output,stderr_output = self.system(qstat_args, "", self.opt.export)
+        if self.sys_opt.qstat_trust_status:
+            if r == 0:
+                inq = 1
+            else:
+                inq = 0
+        else:
+            pat = string.replace(self.sys_opt.qstat_pattern,
+                                 "%job_id%", self.job_id)
+            if re.search(pat, stdout_output):
+                inq = 1
+            else:
+                inq = 0
+        return inq,stdout_output,stderr_output,qstat_args
+        
+    def safe_remove(self, filename):
+        if os.path.exists(filename):
+            try:
+                if dbg>=2:
+                    Es("%s : removing %s\n" % (self.cmd, filename))
+                os.remove(filename)
+            except OSError,e:
+                if dbg>=1:
+                    Es("%s : %s %s (ignored)\n" % (self.cmd, filename, e.args,))
+        
+    def delete_job(self):
+        if self.opt.qdel is None:
+            # treat as if it always succeeds
+            return 0
+        qdel_args = [ self.opt.qdel, self.job_id ]
+        r,stdout_output,stderr_output = self.system(qdel_args, "", self.opt.export)
+        Es(stderr_output)
+        Es(stdout_output)
+        if r == 0:
+            Es("%s : %s (%s) : job %s deleted\n" \
+               % (self.cmd, self.hostname, self.connect_addr, self.job_id))
+            return 0
+        else:
+            Es("%s : %s (%s) : failed to delete job %s from the queue\n" \
+               % (self.cmd, self.hostname, self.connect_addr, self.job_id))
+            return 1
+        
+    def timed_accept(self, so, hello, queue_timeout, bringup_timeout,
+                     display_progress_interval):
+        """
+        Wait for a client to connect to so, or timeout has expired.
+        timeout may be "" in which case we wait forever.
+        We say something to stdout every display_progress_interval seconds.
+        """
+        start_time = cur_time = time.time()
+        kicked = 0
+        if queue_timeout == "":
+            time_limit = ""
+        else:
+            time_limit = cur_time + queue_timeout
+        last_display_time = cur_time
+        check_queue_interval = 3.0
+        while cur_time <= time_limit:
+            # check whether we should display progress in this iteration
+            if display_progress_interval == "" or \
+               cur_time < last_display_time + display_progress_interval:
+                display = 0
+            else:
+                display = 1
+                last_display_time = cur_time
+            
+            # check if job is still in the queue
+            if self.job_in_queue:
+                inq,out,err,cmd_arsg = self.check_job_in_queue()
+                if inq:
+                    if display:
+                        Es("%s : %s (%s) : job %s in queue\n" \
+                           % (self.cmd, self.hostname, self.connect_addr,
+                              self.job_id))
+                else:
+                    # the job has been out of the queue. the job should bring
+                    # up soon. fix time_limit.
+                    if dbg>=1:
+                        Es("%s : %s (%s) : job %s no longer in queue (dead?)\n" \
+                           % (self.cmd, self.hostname, self.connect_addr,
+                              self.job_id))
+                    self.job_in_queue = 0
+                    time_limit = min(cur_time + bringup_timeout, time_limit)
+                
+            if display:
+                if time_limit == "":
+                    Es("%s : %s (%s:%d) : waiting for connection on %d\n" \
+                       % (self.cmd, self.hostname, self.connect_addr, self.port))
+                else:
+                    Es("%s : %s (%s) : waiting for connection on %d (%.1f sec left)\n" \
+                       % (self.cmd, self.hostname, self.connect_addr, self.port,
+                          time_limit - cur_time))
+
+            # calc how many secs to wait for clients to connect until next display
+            random_wait = random.random() - 0.5 # -0.5 <= x <= 0.5
+            next_time_limit = min(cur_time + check_queue_interval + random_wait, time_limit)
+            next_timeout = max(0.0, next_time_limit - cur_time)
+            A,_,_ = select.select([ so ], [], [], next_timeout)
+            if so in A:
+                new_so,_ = so.accept()
+                new_so.send(hello)
+                return new_so
+            cur_time = time.time()
+            # kick qsub to do rescheduling once
+            if kicked == 0:
+                kicked = 1
+                self.kick_qsub()
+
+        if self.job_in_queue:
+            self.delete_job()
+            self.job_in_queue = 0
+            Es("%s : %s (%s) : accept from client timed out\n" \
+               % (self.cmd, self.hostname, self.connect_addr))
+        else:
+            Es("%s : %s (%s) : job %s appears to have gone before connecting "
+               "to the submission host (%s:%s)\n" \
+               % (self.cmd, self.hostname, self.connect_addr, self.job_id, 
+                  self.connect_addr, self.port))
+        return None
+
+    def talk_to_qsub_process(self, so, hello):
+        # wait for connections to come
+        if dbg>=2: Es("%s : %s (%s) : waiting for 1st connection\n" \
+                      % (self.cmd, self.hostname, self.connect_addr))
+        stdin_so = self.timed_accept(so, hello, self.opt.timeout,
+                                     self.opt.bringup_timeout,
+                                     self.opt.display_progress_interval)
+        if stdin_so is None: 
+            so.close()
+	    return 1                    # NG
+
+        if dbg>=2: Es("%s : %s (%s) : waiting for 2nd connection\n" \
+                      % (self.cmd, self.hostname, self.connect_addr))
+        stdout_so = self.timed_accept(so, hello, self.opt.bringup_timeout,
+                                      self.opt.bringup_timeout,
+                                      self.opt.display_progress_interval)
+        if stdout_so is None: 
+            so.close()
+            stdin_so.close()
+            return 1                    # NG
+
+        if dbg>=2: Es("%s : %s (%s) : waiting for 3rd connection\n" \
+                      % (self.cmd, self.hostname, self.connect_addr))
+        stderr_so = self.timed_accept(so, hello, self.opt.bringup_timeout,
+                                      self.opt.bringup_timeout,
+                                      self.opt.display_progress_interval)
+        if stderr_so is None: 
+            so.close()
+            stdin_so.close()
+            stdout_so.close()
+            return 1                    # NG
+
+        so.close()
+        # make everything non-blocking
+        # portability = portability_class()
+        #stdout_so.setblocking(0)
+        #stderr_so.setblocking(0)
+        # portability.set_blocking_fd(0, 0)
+        # repeat watching all sockets / descriptors
+        # fwd[x] = (y, fwd_close) indicates whatever is received from x
+        # should be forwarded to y. if x is closed and fwc_close is 1,
+        # y is closed.
+        fwd = { 0 : stdin_so, stdout_so : 1, stderr_so : 2 }
+        while fwd.has_key(stdout_so) or fwd.has_key(stderr_so):
+            R = fwd.keys()
+            if dbg>=2:
+                Es("%s : %s (%s) : waiting msgs on %s\n" \
+                   % (self.cmd, self.hostname, self.connect_addr, R))
+            R,_,_ = select.select(R, [], [])
+            for r in R:
+                if type(r) is types.IntType:
+                    msg = os.read(r, self.READ_SZ)
+                else:
+                    msg = r.recv(self.READ_SZ)
+                w = fwd[r]
+                if msg == "":
+                    del fwd[r]
+                    if type(w) is types.IntType:
+                        # when debugging, we do not like to close
+                        # my stdout/err
+                        if dbg == 0: os.close(w)
+                    else:
+                        w.close()
+                else:
+                    if type(w) is types.IntType:
+                        os.write(w, msg)
+                    else:
+                        w.sendall(msg)
+        return 0
+
+    def show_script_errors(self):
+	if 1:
+            Es("check stderr of the job in %s\n" % self.stderr_filename)
+            return
+        A = []
+        files = [ ("stdout", self.stdout_filename), 
+                  ("stderr", self.stderr_filename), 
+                  ("script", self.script_filename) ]
+	for i in range(0, 3):
+            if len(files) == 0: break
+            label,f = files.pop(0)
+            try:
+                if os.path.exists(f):
+  		    fp = open(f, "rb")
+                    content = fp.read()
+	            A.append("\n-------- %s (%s) --------\n" % (label, f))
+	            A.append(content)
+                    fp.close()
+                    if content: continue
+                time.sleep(1.0)
+            except KeyboardInterrupt,e:
+	        pass
+            files.append((label, f))
+        Es(string.join(A, ""))
+
+                        
+    def main(self, argv):
+        if self.init(argv) == -1: return 1
+        so,port = self.open_server_socket()
+        self.port = port
+        hello = "hello"
+        if dbg>=2:
+            Es("%s : %s (%s) : listening on port %d\n" \
+               % (self.cmd, self.hostname, self.connect_addr, port))
+        try:
+	    ng = 1  # this means NG
+            self.run_qsub_process(self.connect_addr, port, hello)
+            if self.job_id is None: return 1
+            ng = self.talk_to_qsub_process(so, hello)
+        except KeyboardInterrupt,e:
+	    Es("qsub_wrap: got KeyboardInterrupt\n")
+
+	if ng:
+	    # talk_to_qsub failed, leave output
+            if self.job_id is not None and self.job_in_queue:
+                self.delete_job()
+	    # wait a second for the system to copy the output/error file
+	    self.show_script_errors()
+            # this happens all the time HA8000, so we delete files
+            # even when this fails
+            time.sleep(1.0)
+            if self.opt.leave_output == 0:
+                for f in self.files_to_remove:
+                    self.safe_remove(f)
+        elif self.opt.leave_output == 0:
+            time.sleep(1.0)
+            for f in self.files_to_remove:
+                self.safe_remove(f)
+
+def main():
+    s = qsub_wrap_server()
+    return s.main(sys.argv)
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+# $Log: qsub_wrap,v $
+# Revision 1.24  2012/07/04 14:46:14  ttaauu
+# added rsh kyoto_mpp and kyoto_cluster
+#
+# Revision 1.23  2012/07/04 12:11:50  ttaauu
+# added lsf support (on Kyoto machines)
+#
+# Revision 1.22  2012/07/04 12:10:16  ttaauu
+# added lsf support (on Kyoto machines)
+#
+# Revision 1.21  2012/04/03 13:00:30  ttaauu
+# *** empty log message ***
+#
+# Revision 1.20  2011/06/02 17:30:16  ttaauu
+# *** empty log message ***
+#
+# Revision 1.19  2011/05/11 14:16:54  ttaauu
+# *** empty log message ***
+#
+# Revision 1.18  2010/03/05 05:27:09  ttaauu
+# stop extending PYTHONPATH. see 2010-3-5 ChangeLog
+#
+# Revision 1.17  2009/12/31 20:09:48  ttaauu
+# *** empty log message ***
+#
+# Revision 1.16  2009/06/18 00:32:18  ttaauu
+# condor support
+#
+# Revision 1.15  2009/06/17 23:50:37  ttaauu
+# experimental condor support
+#
+# Revision 1.14  2009/06/06 14:06:26  ttaauu
+# added headers and logs
+#

@@ -1,0 +1,265 @@
+
+<html>
+<head>
+<meta http-equiv="content-type" content="text/html; charset=utf-8"/>
+%(reload_directive)s
+
+<title>GXP make jobs and parallelismm</title>
+<style>
+<!--
+h1 {
+  background-color:#ccc;
+}
+table {
+ margin:0px;
+ border-style:solid;
+ border-width:1px;
+}
+td {
+  margin:0px;
+  border-style:solid;
+  border-width:1px;
+}
+td.job_queued {
+  background-color:#fff;
+}
+td.job_running {
+  background-color:#ffc;
+}
+td.job_success {
+  background-color:#cff;
+}
+td.job_failed {
+  background-color:#ff8;
+}
+td.job_killed {
+  background-color:#ff4;
+}
+td.job_worker_died {
+  background-color:#c8c;
+}
+td.job_worker_left {
+  background-color:#c8f;
+}
+td.job_no_throw {
+  background-color:#f4f;
+}
+td.job_interrupted {
+  background-color:#f4c;
+}
+td.man_free {
+  background-color:#fff;
+}
+td.man_0_active {
+  background-color:#ffc;
+}
+td.man_1_leaving {
+  background-color:#ff4;
+}
+td.man_2_gone {
+  background-color:#c4c;
+}
+-->
+</style>
+
+<!-- you may have this file to overwrite default style -->
+<link rel="stylesheet" href="state.css" type="text/css"/>
+
+</head>
+
+<a name="Table of Contents">
+<h1>Contents</h1>
+<ul>
+<li><a href="#Basic info">Basic Info</a>
+<li><a href="#Config">Config</a>
+<li><a href="#Job Counts">Job Counts</a>
+<li><a href="#Parallelism">Parallelism</a>
+<li><a href="#RSS">RSS</a>
+<li><a href="#Memory ">Memory</a>
+<li><a href="#Load Average">Load Average</a>
+<li>Jobs
+<ul>
+  <li><a href="#Job Lists Legend">Job Lists Legend</a>
+  <li><a href="#Failed Jobs">Failed Jobs</a>
+  <li><a href="#Long Jobs">Long Jobs</a>
+  <li><a href="#Recent Jobs">Recent Jobs</a>
+</ul>
+<li><a href="#Workers">Workers</a>
+</ul>
+
+<a name="Basic Info">
+<h1>Basic Info</h1>
+<a href="#">page top</a><br><br>
+<table class="basic_info">
+%(basic_info_table)s
+</table>
+
+<a name="Config">
+<h1>Config</h1>
+<a href="#">page top</a><br><br>
+<table class="config">
+%(conf_table)s
+</table>
+
+<a name="Job Counts">
+<h1>Job Counts</h1>
+<a href="#">page top</a><br><br>
+<!-- <p>took 1.941 sec to generate the graph.</a>-->
+<p>if the following image is broken, gnuplot may have gotten an error.</p>
+<ul>
+<li><a href="run_counts.gpl">gnuplot source</a>
+<li><a href="run_counts.dat">gnuplot data</a>
+<li><a href="run_counts.err">gnuplot error</a>
+</ul>
+<a href="run_counts.png"><img src="run_counts.png" width=640></a><br>
+
+
+<a name="Parallelism">
+<h1>Parallelism</h1>
+<a href="#">page top</a><br><br>
+<!-- <p>took 3.489 sec to generate the graph.</a>-->
+<p>if the following image is broken, gnuplot may have gotten an error.</p>
+<ul>
+<li><a href="parallelism.gpl">gnuplot source</a>
+<li><a href="parallelism.dat">gnuplot data</a>
+<li><a href="parallelism.err">gnuplot error</a>
+</ul>
+<a href="parallelism.png"><img src="parallelism.png" width=640></a><br>
+
+<a name="RSS">
+<h1>RSS</h1>
+<a href="#">page top</a><br><br>
+<!-- <p>took 0.093 sec to generate the graph.</a>-->
+<p>if the following image is broken, gnuplot may have gotten an error.</p>
+<ul>
+<li><a href="rss.gpl">gnuplot source</a>
+<li><a href="rss.dat">gnuplot data</a>
+<li><a href="rss.err">gnuplot error</a>
+</ul>
+<a href="rss.png"><img src="rss.png" width=640></a><br>
+
+<a name="Memory">
+<h1>Memory</h1>
+<a href="#">page top</a><br><br>
+<!-- <p>took 0.081 sec to generate the graph.</a>-->
+<p>if the following image is broken, gnuplot may have gotten an error.</p>
+<ul>
+<li><a href="mem.gpl">gnuplot source</a>
+<li><a href="mem.dat">gnuplot data</a>
+<li><a href="mem.err">gnuplot error</a>
+</ul>
+<a href="mem.png"><img src="mem.png" width=640></a><br>
+
+<a name="Load Average">
+<h1>Load Average</h1>
+<a href="#">page top</a><br><br>
+<!-- <p>took 0.081 sec to generate the graph.</a>-->
+<p>if the following image is broken, gnuplot may have gotten an error.</p>
+<ul>
+<li><a href="loadavg.gpl">gnuplot source</a>
+<li><a href="loadavg.dat">gnuplot data</a>
+<li><a href="loadavg.err">gnuplot error</a>
+</ul>
+<a href="loadavg.png"><img src="loadavg.png" width=640></a><br>
+
+
+
+<a name="Job Lists Legend">
+<h1>Job Lists Legend</h1>
+<ul>
+<li><b>queued:</b> master time at which the work is received by the master</li>
+<li><b>worker:</b> the first word of GUPID of the worker. normally host name</li>
+<li><b>local start time:</b> master time at which the master sent the job to a worker</li>
+<li><b>local end time:</b> master time at which the master received the notification that the job has finished</li>
+<li><b>local elapsed time:</b> for finished jobs, local end time - local start time. for running jobs,current time - local start time</li>
+<li><b>remote start time:</b> worker time at which the worker really spawned the job. see note on time skew below</li>
+<li><b>remote end time:</b> worker time at which the worker really detected the end of the job. see note on time skew below</li>
+<li><b>remote elapsed time:</b> remote end time - remote start time</li>
+<li><b>user/system time:</b> user CPU time as obtained by getrusage</li>
+<li><b>minor/major faults:</b> minor/major faults as obtained by getrusage</li>
+<li><b>io:</b> standard output/error of the job, up to 1024 bytes (up to 128KB will be held in the database</li>
+<li><b>io file:</b> standard output/error of the job, if it overflows 128KB limit</li>
+</ul>
+<p>
+Remote start/end time includes time skew is between the master and workers.
+More precisely, these values are obtained by:
+<blockquote>
+ local time obtained
+by the worker who executed the job - local time obtained by the master
+at the start of the entire make.
+</blockquote>
+</p>
+
+<p>
+<table border=0>
+<tr>
+<td class="job_queued">queued</td>
+<td class="job_running">running</td>
+<td class="job_success">success</td>
+<td class="job_failed">failed</td>
+<td class="job_killed">killed</td>
+<td class="job_worker_died">worker_died</td>
+<td class="job_worker_left">worker_left</td>
+<td class="job_no_throw">no_throw</td>
+<td class="job_interrupted">interrupted</td>
+</tr>
+</table>
+</p>
+
+<h1>Man Lists Legend</h1>
+<table border=0>
+<tr>
+<td class="man_0_active">active</a>
+<td class="man_1_leaving">leaving</a>
+<td class="man_2_gone">gone</a>
+</tr>
+</table>
+
+</p>
+<a name="All Jobs">
+<h1>All Jobs</h1>
+<a href="#">page top</a><br><br>
+%(all_jobs)s
+
+<a name="Failed Jobs (Earliest)">
+<h1>Failed Jobs (Earliest)</h1>
+<a href="#">page top</a><br><br>
+<table border=1>
+%(failed_earliest_jobs_table)s
+</table>
+
+<a name="Failed Jobs (Latest)">
+<h1>Failed Jobs (Latest)</h1>
+<a href="#">page top</a><br><br>
+<!-- (link_to_work_db)s -->
+<table border=1>
+%(failed_latest_jobs_table)s
+</table>
+
+<a name="Long Jobs">
+<h1>Long Jobs</h1>
+<a href="#">page top</a><br><br>
+<!-- (link_to_work_db)s -->
+<table border=1>
+%(long_jobs_table)s
+</table>
+
+<a name="Recent Jobs">
+<h1>Recent Jobs</h1>
+<a href="#">page top</a><br><br>
+<!-- (link_to_work_db)s -->
+<table border=1>
+%(recent_jobs_table)s
+</table>
+
+<a name="Workers">
+<h1>Workers</h1>
+<a href="#">page top</a><br><br>
+last_ping_time = 0.000<br>
+
+<table>
+%(workers_table)s
+</table>
+
+</body>
+</html>

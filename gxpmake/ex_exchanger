@@ -1,0 +1,41 @@
+#!/usr/bin/env python
+import os,re,string,sys
+
+if not os.__dict__.has_key("SEEK_CUR"):
+    os.SEEK_CUR = 1
+
+def read_chunk(fp, reducer, header_p, trailer_p):
+    header = fp.read(30)
+    if header == "": return ""
+    m = header_p.match(header)
+    assert m, header
+    dest = int(m.group(1))
+    len_chunk = int(m.group(2))
+    if dest == reducer:
+        chunk = fp.read(len_chunk)
+    else:
+        fp.seek(len_chunk, os.SEEK_CUR)
+        chunk = None
+    trailer = fp.read(10)
+    assert trailer_p.match(trailer), trailer
+    return chunk
+
+def main():
+    files = sys.argv[1:-1]
+    [ reducer, n_reducers ] = string.split(sys.argv[-1], ",", 1)
+    header_p = re.compile("\nBEGCHUNK +(\d+) +(\d+)\n")
+    trailer_p = re.compile("\nENDCHUNK\n")
+    reducer = int(reducer)
+    n_reducers = int(n_reducers)
+    for f in files:
+        fp = open(f, "rb")
+        while 1:
+            a = read_chunk(fp, reducer, header_p, trailer_p)
+            if a == "": break
+            if a is not None: 
+                sys.stdout.write(a)
+        fp.close()
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())

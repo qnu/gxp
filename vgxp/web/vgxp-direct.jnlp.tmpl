@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<jnlp spec="1.0+" codebase="%CODEBASE%" href="%JNLPNAME1%">
+ <information>
+  <title>%TITLE% (direct connection)</title>
+  <vendor>Yoshikazu Kamoshida</vendor>
+  <homepage href="%VGXPHOMEPAGE%" />
+  <description>VGXP(Visual Grid Explorer)</description>
+ </information>
+ <resources>
+  <jar href="%JARNAME%" />
+  <j2se href="http://java.sun.com/products/autodl/j2se" version="1.6+"/>
+  <property name="sun.java2d.noddraw" value="true"/>
+  <extension name="jogl-all-awt" href="%JOGLURL%" />
+ </resources>
+ <application-desc main-class="Main">
+  <argument>vgxp+%CODEBASE%/%PORTCONF_FILENAME%</argument>
+ </application-desc>
+</jnlp>

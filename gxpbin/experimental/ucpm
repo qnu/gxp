@@ -1,0 +1,1473 @@
+#!/usr/bin/env python
+# -*- python -*-
+
+import sys,time
+import select
+import random, re
+import xml.parsers.expat
+import random, sys, time
+import os,sys,getopt,popen2
+
+from ucp_common import *
+
+# Please set options in ucp_common.py
+
+############################################################
+# from myxml.py
+############################################################
+
+"""        Section XML        """
+""" Functions for loading XML """
+
+class MyXMLParser :
+    # USAGE : parser = MyXMLParser("tasks.xml")
+    #  Then, the root node can be accessed from parser.root
+    def __init__(self, filename):
+        if filename is not None:
+            self.parse(filename)
+
+   
+    def parse(self, filename):
+        """
+            Load an XML file
+           
+        """
+        self.current = None
+        self.root = None
+        parser = xml.parsers.expat.ParserCreate()
+        parser.StartElementHandler  = self.begin_element
+        parser.EndElementHandler    = self.end_element
+        parser.CharacterDataHandler = self.char_data
+        
+        fp = open(filename, 'r')
+        parser.ParseFile(fp)
+        fp.close()
+
+        if self.current is not None:
+            raise "Illegally formatted XML"
+
+
+    def begin_element(self, name, attrs):
+        """
+            Only internally used, called when encountering start tags
+           
+        """
+        newNode = MyXMLNode(name, self.current, attrs)
+        if self.current is not None:
+            self.current.children.append(newNode)
+        self.current = newNode
+        
+        
+    def end_element(self, name):
+        """
+            Only internally used, called when encountering end tags
+           
+        """
+        if self.current.name != name:
+            err_str = "Illegally formatted XML : tag name "
+            err_str += name + " doesn't match ("
+            err_str += gb_XMLCurrent.name + " is expected)"
+        if self.current.parent is not None:
+            self.current = self.current.parent
+        else :
+            self.root = self.current
+            self.current = None
+        
+        
+    def char_data(self, data):
+        """
+            Only internally used, called when encountering values
+           
+        """
+        if self.current is None:
+            raise "Illegally formatted XML"
+        self.current.append(data)
+
+
+class MyXMLNode :
+    """
+       A class corresponding to an XML node
+
+    """
+    def __init__(self, name, parent, attrs=None):
+        self.name = name
+        self.parent = parent
+        self.children = []
+        self.attrs = attrs
+        self.value = ""
+
+        
+    def append(self, value):
+        self.value += value
+        
+
+    def __str__(self):
+        self.value = self.value.strip()
+        ret = "<%s : %s>\n"%(self.name, self.value)
+        for child in self.children:
+            ret += str(child)
+        ret += "</%s>\n"%(self.name)
+        return ret
+
+
+
+############################################################
+# from topology.py
+############################################################
+
+
+
+##########  Topology Section  ##########
+
+class Node:
+    """
+    Denoting a computational node or a switch
+
+    """
+    def __init__(self, xmlNode, parent, depth, node_id):
+        self.node_id = node_id
+        self.max_child_id = node_id
+        self.parent = parent
+        self.depth = depth
+        self.nexts = []
+
+        self.rtt = 0.0
+        if xmlNode is not None:
+            self.parse(xmlNode, depth)
+        else:
+            assert False
+
+        
+    def __str__(self):
+        ret = " " * self.depth
+        ret += "<%s>\n"%(self.name)
+        return ret
+
+    
+    def parse(self, root, depth):
+        self.type = root.name
+        self.weight = 0.0
+        if "bandwidth" in root.attrs:
+            self.weight = float(root.attrs["bandwidth"])
+        self.depth = depth
+        self.name = ""
+        for xmlNode in root.children:
+            if xmlNode.name in ["SWITCH", "NODE"]:
+                node = Node(xmlNode, self, depth+1, self.max_child_id+1)
+                self.nexts.append(node)
+                self.max_child_id = node.max_child_id
+            elif xmlNode.name == "HOSTNAME":
+                self.name = xmlNode.value
+            else :
+                raise "Invalid tag"
+        if self.name == "":
+            self.name = "switch%d"% self.node_id
+
+
+
+class Topology:
+    """
+    Topology information, including a list of computers, switches and links.
+    The information is loaded from an XML file.
+    
+    """
+    
+    def __init__(self, fn):
+        parser = MyXMLParser(fn)
+        assert len(parser.root.children) == 1
+        self.root = Node(parser.root.children[0], None, 0, 0)
+
+
+        self.computers = {} # List of computers  { name => node_object}
+        self.links = []     # list of links [(child, parent), (parent, child),..]
+
+        """
+            links:     [(lower_node1, upper_node1), (lower_node1, upper_node2), ...] 
+            computers: [node1, node2, ... ]
+        """
+
+        self.bws = BandwidthMap()
+        unvisited = [self.root]
+        visited = []
+        while len(unvisited) > 0:
+            node = unvisited.pop()
+            if node.type == "NODE":
+                if node.name in self.computers:
+                    Es("Duplicated Entry for %s in the topology file\n"%(node.name))
+                    sys.exit(1)
+                self.computers[node.name] = node
+            if node.parent is not None:
+                self.links.append((node.name, node.parent.name))
+                self.links.append((node.parent.name, node.name))
+                if self.bws is not None: 
+                    self.bws.links[(node.name, node.parent.name)] = node.weight
+                    self.bws.links[(node.parent.name, node.name)] = node.weight
+            for n in node.nexts:
+                if n in visited: continue
+                unvisited.append(n)
+            visited.append(node)
+
+    def trim(self, hosts):
+        """
+        Trim hosts which are not in active_list
+        
+        """
+        to_trim = self.computers.keys()
+        for h in hosts:
+            for hh in to_trim:
+                if hh.startswith(h):
+                    to_trim.remove(hh)
+                    break
+                
+        for h in to_trim:
+            if h not in self.computers: continue
+            node = self.computers[h]
+            del self.computers[h]
+            while True:
+                parent = node.parent
+                if parent is None:
+                    Es("No nodes left!\n")
+                    assert False
+                self.links.remove((parent.name, node.name))
+                self.links.remove((node.name, parent.name))
+                if self.bws is not None:
+                    del self.bws.links[(parent.name, node.name)]
+                    del self.bws.links[(node.name, parent.name)]
+                parent.nexts.remove(node)
+                if len(parent.nexts) != 0:
+                    break
+                node = parent
+                #del self.switches[node.name]
+                
+        
+        
+    def __str__(self):
+        ret = "Cluster\n"
+        unvisited = [self.root]
+        while len(unvisited) > 0:
+            node = unvisited.pop()
+            ret += str(node)
+            for c in node.nexts:
+                unvisited.append(c)
+        return ret
+
+
+
+    def getAncestors(self, name):
+        """ Return ancestor names until reaching the root """
+        if name not in self.computers: return []
+        node = self.computers[name]
+        ret_list = [node.name]
+        while node.parent is not None:
+            ret_list.append(node.parent.name)
+            node = node.parent
+        return ret_list
+
+
+    def getNeighbor(self, name):
+        """ Return ancestor names until reaching the root """
+        assert name in self.computers
+        node = self.computers[name]
+        current = node
+        while True:
+            if current.parent is None:
+                # Reached to the top...
+                while True:
+                    if current.name in self.computers:
+                        return current.name
+                    if len(current.nexts) == 0:
+                        break
+                    current = current.nexts[0]
+            children = current.parent.nexts
+            assert current in children
+            index = children.index(current)
+            if index + 1 < len(children):
+                current = children[index+1]
+                while True:
+                    if current.name in self.computers:
+                        return current.name
+                    if len(current.nexts) == 0:
+                        break
+                    current = current.nexts[0]
+            current = current.parent
+            assert current != node
+
+    def getDepthFirstList(self):
+        """ Return ancestor names until reaching the root """
+        ret_list = []
+        stack = [self.root]
+        
+        while stack != []:
+            node = stack.pop()
+            for c in node.nexts:
+                if c.name in self.computers:
+                    ret_list.append(c.name)
+                else:
+                    stack.append(c)
+        return ret_list
+    
+
+    def pickLinks(self, a, b):
+        """ Return list of ints, representing links used for the transfer from start to the end """
+        " FROM a TO b "
+        # Trace from the bottom to the top
+        ancestors_a = self.getAncestors(a)
+        ancestors_b = self.getAncestors(b)
+        assert None not in ancestors_a
+        assert None not in ancestors_b
+        
+        common_parent = None
+
+        while True:
+            aa = ancestors_a[-1]
+            bb = ancestors_b[-1]
+            assert None not in [aa,bb]
+            if aa == bb:
+                common_parent = aa
+                ancestors_a.pop()
+                ancestors_b.pop()
+                continue
+            ret_list = []
+            if common_parent is None:
+                assert False
+            for i in range(len(ancestors_a)-1):
+                ret_list.append((ancestors_a[i], ancestors_a[i+1]))
+            ret_list.append((aa,common_parent))
+            ret_list.append((common_parent, bb))
+            for i in range(len(ancestors_b)-1, 0, -1):
+                ret_list.append((ancestors_b[i], ancestors_b[i-1]))
+            return ret_list
+
+    def order_depthfirst(self, hosts, src):
+        ret = self.getDepthFirstList(src)
+        del_list = []
+        for i,h in enumerate(ret):
+            if h not in hosts:
+                del_list.append(h)
+                
+        sorted_hosts = []
+        for i,h in enumerate(ret):
+            if i in del_list:continue
+            sorted_hosts.append(h)
+        return sorted_hosts
+    
+    
+########## Bandwidth Map ##########
+class BandwidthMap:
+    """
+    A class holding bandwidth value for each link
+    (self.links : (l0, l1) --> bandwidth value
+    Now bandwidth information is included in the topology file
+    
+    """
+    def __init__(self):
+        #Serializable.__init__(self)
+        self.links = {}
+                
+            
+    def clone(self):
+        ret = BandwidthMap()
+        for key,value in self.links.items():
+            ret.links[key] = value
+        return ret
+
+
+    def __str__(self):
+        ret = "<bandwidth>\n"
+        for key in self.links:
+            ret += "  From %s to %s: %5.3f\n"%(key[0],key[1],self.links[key])
+        return ret
+
+
+    def minus(self, another_bw, topology, factor=1.0):
+        for link in topology.links:
+            if link in another_bw.links:
+                self.links[link] -= another_bw.links[link] * factor
+                assert self.links[link] >= 0
+
+########### Class for logging
+class Log:
+    def __init__(self, fn):
+        self.fn = fn
+        self.fp = open_for_append(self.fn)
+
+    def close(self):
+        self.fp.close()
+        
+    def write(self, line):
+        """
+        record that a task NAME has finished with status (and some other info) = val
+        """
+        self.fp.write(line)
+        self.fp.flush()
+
+    def write_ts(self, line): # Write with timestamp
+        """
+        record that a task NAME has finished with status (and some other info) = val
+        """
+        self.fp.write("%s %s\n"%(self.gettimestr(), line))
+        self.fp.flush()
+
+    def gettimestr(self):
+        yy,mm,dd,h,m,s,_,_,_ = time.localtime()
+        return "%02d/%02d %02d:%02d:%02d"%(mm,dd,h,m,s)
+
+
+
+############################################################
+# from routing.py
+############################################################
+"""
+*** routing.py ***
+It plans relay schedules passing through NAT/FW.
+The configuration needs to be written in a file in advance
+
+INPUT : FROM imade000 TO kyoto010
+OUTPUT: imade000 -> kyoto000 -> kyoto010
+
+A list of active hosts are needed in advance.
+(In the default hehavior, it reads the file `actives' )
+The following commandline displays routing plan from hongo000 to kyoto012
+
+$ python routing.py hongo000.logos.ic.i.u-tokyo.ac.jp kyoto012
+
+
+See 'main()' for the detailed usage
+
+"""
+
+
+
+class RoutingException(Exception):
+    def __init__(self, msg=None):
+        self.msg = msg
+    def __str__(self):
+        return "Error: %s"%(self.msg)
+
+
+class Routing:
+    WEIGHT_SOCKET = 1
+    WEIGHT_SSH = 10
+    FW = 1
+    BW = 2
+    RELAY = 3
+    
+    def __init__(self, fn):
+        self.ptns = {}
+        self.sock_map = {}
+        self.read_file(fn)
+        #self.routing_maps = {} # src_label -> tree
+        self.sock_routing_map = {}
+        
+    def read_file(self, fn):
+        self.fp = open(fn, "r")
+        for ll in self.fp.readlines():
+            l = (ll.split("#")[0]).strip()
+            if l == "": continue
+            if ">" not in l:
+                # Hostgroup Spec
+                A = l.split(None, Routing.WEIGHT_SOCKET)
+                if len(A) != 2: raise MyException("Illegal Format: %s"%(l))
+                label,ptn_str = A
+                assert label not in self.ptns
+                self.ptns[label] = []
+                for ptn in ptn_str.split():
+                    self.ptns[label].append(mk_host_regexp(ptn))
+                
+            else:
+                # Routing expression
+                method,rest = l.split(None,1)
+                assert method in ["socket", "ssh"]
+                src_label,dest_label = rest.split(">",1)
+                srcs = src_label.split()
+                dests = dest_label.split()
+                if method == "socket":
+                    target = self.sock_map
+                else:
+                    raise MyException("Not Implemented Yet")
+                
+                for src in srcs:
+                    if src not in target:
+                        target[src] = []
+                    for dest in dests:
+                        target[src].append(dest)
+
+                        
+        # Check if labels are valid
+        for src,dest_list in self.sock_map.items():
+            if src not in self.ptns: raise MyException("Pattern %s is used but did not appear before"%(src))
+            for dest in dest_list:
+                assert dest in self.ptns
+
+
+    def trim(self, actives):
+        new_ptns = {}
+        break_flag = False
+        for label,ptn_list in self.ptns.items():
+            for ptn in ptn_list:
+                for host in actives:
+                    if ptn.match(host):
+                        break_flag = True
+                        break
+                if break_flag: break
+            if break_flag:
+                new_ptns[label] = ptn_list
+                break_flag = False
+        self.ptns = new_ptns
+        new_sock_map = {}
+        for src,dest_list in self.sock_map.items():
+            if src not in self.ptns: continue
+            new_dest_list = []
+            for dest in dest_list:
+                if dest not in self.ptns: continue
+                new_dest_list.append(dest)
+            new_sock_map[src] = new_dest_list
+        self.sock_map = new_sock_map
+        #M("Pattern: %s, SockMap: %s\n"%(str(self.ptns), str(self.sock_map)))
+                    
+                    
+#     def write(self, fp=sys.stdout):
+#         print >> fp, "*** %s PATTERNS ***"%(method)
+#         for src,dest_list in self.sock_map.items():
+#             for dest in dest_list:
+#                 print >> fp, "%s to %s"%(src,dest)
+
+        
+    def getRoute(self, s_host, d_host):
+        def check_direct(src_labels, dest_labels, routing_table):
+            for src in src_labels:
+                if src not in routing_table: continue
+                for dest in dest_labels:
+                    if dest in routing_table[src]: return True
+            return False
+        
+        def create_relay_tree(label, routing_table):
+            """ Create a relay tree starting from 'label' """
+            root = (label, 0, [], []) # [(A,1,[entries], [appeared]), ...]
+            routes = {} # Route to each node, e.g. { A:([B,C], 3), B:([], 1) }
+            to_visit = [root]
+            while len(to_visit) > 0:
+                label,cost,nexts,appeared = to_visit.pop(0)
+                if label not in routing_table: continue
+                for dest_label in routing_table[label]:
+                    if dest_label in appeared: continue
+                    l = appeared[:]
+                    l.append(dest_label)
+                    new_cost = cost + Routing.WEIGHT_SOCKET
+                    if dest_label in routes:
+                        registered_cost,registered_path = route[dest_label]
+                        if new_cost >= registered_cost: continue
+                    routes[dest_label] = (new_cost, l)
+                    entry = (dest_label, new_cost, [], l)
+                    nexts.append(entry)
+                    to_visit.append(entry)
+            return root,routes
+        
+        # Match hosts
+        s_labels = []; d_labels = []
+        for label,ptn_list in self.ptns.items():
+            for ptn in ptn_list:
+                if ptn.match(s_host): s_labels.append(label)
+                if ptn.match(d_host): d_labels.append(label)
+
+        # Check if forward direct connection is possible
+        if check_direct(s_labels, d_labels, self.sock_map):
+            return self.FW,None
+        # Check if backward direct connection is possible
+        if check_direct(d_labels, s_labels, self.sock_map):
+            return self.BW,None
+        # Check routing tree % THis tree is constructed only using FW links
+        routing_map = self.sock_routing_map #["socket"]
+        min_cost = LARGE_VALUE
+        min_route = None
+        for s_label in s_labels:
+            if s_label not in routing_map:
+                # Prepare routing tree
+                root, routes = create_relay_tree(s_label, self.sock_map)
+                routing_map[s_label] = routes
+            for d_label in d_labels:
+                if d_label not in routing_map[s_label]: continue
+                cost,route = routing_map[s_label][d_label]
+                if cost > min_cost: continue
+                min_route = route; min_cost = cost
+        if min_route is not None:
+            ret = min_route[:]
+            ret.pop()
+            return self.RELAY,ret
+        raise MyException("Route from %s to %s cannot be constructed"%(s_host,d_host))
+        #return 
+
+
+
+            
+                      
+def read_actives(fn = "actives"):
+    fp = open(fn)
+    hosts = []
+    for l in fp.readlines():
+        hosts.append(l.strip())
+        fp.close()
+    return hosts
+
+                  
+
+############################################################
+# from multicast.py
+############################################################
+"""
+*** multicast.py ***
+It plans relay schedules from the transfer planning
+To consider NAT/FW, you need to use class Routing in routing.py
+
+INPUT : SRC = [A], DESTS = [B, C]
+OUTPUT: A -> B: 500Mbps, B->C: 500Mbps
+
+See 'main()' for the detailed usage
+
+"""
+class Schedule:
+    # self.capacity [ hostname => capacity bandwidth ]
+    # (local src, local dest)
+    def __init__(self, srcs, top, bws):
+        self.aggregate_bw = 0
+        self.transfers = {}    # Link and the bandwidth running on it
+                               # {(src,dest) -> bw,...}
+        self.link_usage = {}   # Link to pipeline id
+                               # {(src,dest) -> [pid0, pid1, ...] ... }
+        self.arriving_bw = {}  # {(src,dest) -> bw}
+        self.pipelines = []    # bandwidth of each pipelines
+                               # [bw0, bw1, ...]
+
+        # Working vars
+        self.top = top
+        self.initial_bws = bws # Info. of Bandwidth 
+        self.bws = bws.clone()
+        
+        # Set sources
+        for s in srcs:
+            self.arriving_bw[s] = LARGE_VALUE
+
+
+    def addTransfer(self, src, dest, bw, use_links, pipeline_id = -1):
+        # bw: the bw from the src to the dest
+        # If this pair of (srec,dest) appears for the first time, set zeros
+        if (src,dest) not in self.transfers: 
+            self.transfers[(src, dest)] = 0
+            self.arriving_bw[dest] = 0
+        self.transfers[(src, dest)] += bw
+        self.arriving_bw[dest] += bw
+        
+        self.aggregate_bw += bw
+
+        # update bws
+        for l in use_links:
+            v = self.bws.links[l]
+            self.bws.links[l] = v - bw
+            assert self.bws.links[l] >= 0
+            
+        if pipeline_id == -1: return
+        if (src,dest) not in self.link_usage:
+            self.link_usage[(src,dest)] = []
+        self.link_usage[(src,dest)].append(pipeline_id)
+        
+
+    def addPipeline(self, pid, bw):
+        assert len(self.pipelines) == pid
+        self.pipelines.append(bw)
+
+    def write(self, fp=None):
+        if fp is None:
+            fp = sys.stderr
+        #print >> fp, "Src ",
+        #for s in self.srcs:
+        #    print >> fp, s,
+        #print >> fp
+
+        for trans,bw in self.transfers.items():
+            if bw > 0.1:
+                print >> fp, trans[0], trans[1], "%.1f"%bw
+        
+
+class MulticastPlanner:
+    def __init__(self, top_fn, transfer, active_hosts=None):
+        ### Prepare everything
+        self.top = Topology(top_fn)
+        if active_hosts is not None:
+            self.top.trim(active_hosts)
+        self.bws = self.top.bws  # Bandwidth value is annotated in the topology file
+        self.srcs = transfer[0][:]
+        self.dests = transfer[1][:]
+        for s in self.srcs:
+            if s not in self.top.computers:
+                Es("%s is not in the topology file\n"%(s))
+                os._exit(1)
+        for d in self.dests:
+            if d not in self.top.computers:
+                print >> sys.stderr, "%s is not in the topology file\n"%(d)
+                sys.exit(1)
+            
+        self.schedule = Schedule(self.srcs, self.top, self.bws)
+
+
+    def greedy(self):
+        """ Greedy Tree """
+        while self.dests != []:
+            pair,bw,links = self.pickPair()
+            self.dests.remove(pair[1])
+            self.srcs.append(pair[1])
+            self.schedule.addTransfer(pair[0], pair[1], bw, links)
+
+
+    def pickPair(self):
+        """ Function for primer """
+        bw,pair,links = -1,None,None
+        for s in self.srcs:
+            for d in self.dests:
+                val = self.schedule.arriving_bw[s]
+                use_links = self.top.pickLinks(s, d)
+                for l in use_links:
+                    if val > self.schedule.bws.links[l]:
+                        val = self.schedule.bws.links[l]
+                if bw >= val: continue
+                bw = val
+                pair = (s,d)
+                links = use_links
+        return pair,bw,links
+
+
+    def depthfirst(self):
+        """ Depthfirst Pipeline """
+        unconnected_nodes = self.dests
+        for src in self.srcs:
+            currentNode = src
+            currentSrc = src
+            i = 0
+            while self.dests != []:
+                i += 1
+                nextNode = self.top.getNeighbor(currentNode)
+                if nextNode in self.srcs: break
+                if nextNode not in self.dests:
+                    currentNode = nextNode
+                    continue
+                links = self.top.pickLinks(currentSrc, nextNode)
+                bw = self.schedule.arriving_bw[currentSrc]
+                for l in links:
+                    link_bw = self.schedule.bws.links[l]
+                    if bw > link_bw: bw = link_bw
+                self.schedule.addTransfer(currentSrc, nextNode, bw, links)
+                self.dests.remove(nextNode)
+                currentSrc = nextNode
+
+
+    def stable(self):
+        """ Stable Broadcast """
+        node_list = self.top.getDepthFirstList()
+        pipeline_id = 0
+        for src in self.srcs:
+            while True:
+                # Start creating a pipeline
+                currentSrc = src
+                currentIndex = node_list.index(src)
+                p_bw = LARGE_VALUE
+                hosts = [src]
+                linkses = []
+                while True:
+                    # Try the next node
+                    currentIndex = (currentIndex + 1) % len(node_list)
+                    node = node_list[currentIndex]
+                    if node == src: break
+                    if node not in self.dests: continue
+                    # Pick links used in the transfer from previous node to here
+                    links = self.top.pickLinks(currentSrc, node)
+                    bw = LARGE_VALUE
+                    for l in links:
+                        link_bw = self.schedule.bws.links[l]
+                        if bw > link_bw: bw = link_bw
+                    # When bandwidth of this pipeline becomes zero, skip this node
+                    if bw == 0: continue 
+                    if p_bw > bw: p_bw = bw
+                    hosts.append(node)
+                    linkses.append(links)
+                    currentSrc = node
+                if len(hosts) == 1: break # No pipeline 
+                self.schedule.addPipeline(pipeline_id, p_bw)
+                for i in range(len(hosts)-1):
+                    self.schedule.addTransfer(hosts[i], hosts[i+1], p_bw, linkses[i], pipeline_id)
+                # Add pipeline-id on 
+                pipeline_id += 1
+
+    
+
+    def randomTree(self):
+        while self.dests != []:
+            pair,bw,links = self.pickRandomPair()
+            self.dests.remove(pair[1])
+            self.srcs.append(pair[1])
+            self.schedule.addTransfer(pair[0], pair[1], bw, links)
+
+
+
+    def pickRandomPair(self):
+        """ Function for primer """
+        s = self.srcs[int(random.random() * len(self.srcs))]
+        d = self.dests[int(random.random() * len(self.dests))]
+        val = self.schedule.arriving_bw[s]
+        links = self.top.pickLinks(s, d)
+        val = self.schedule.arriving_bw[s]
+        links = self.top.pickLinks(s, d)
+        for l in links:
+            if val > self.schedule.bws.links[l]:
+                val = self.schedule.bws.links[l]
+        return ((s,d),val,links)
+
+
+    def flatTree(self):
+        for d in self.dests:
+            s = self.srcs[int(random.random() * len(self.srcs))]
+            val = self.schedule.arriving_bw[s]
+            links = self.top.pickLinks(s, d)
+            for l in links:
+                if val > self.schedule.bws.links[l]:
+                    val = self.schedule.bws.links[l]
+            self.schedule.addTransfer(s, d, val, links)
+
+
+
+
+############################################################
+# from env.py
+############################################################
+"""
+class Env
+Parse input and plan a relaying schedule
+
+Usage:
+$ python ucp_planner.py hongo000:/data/local/somewhere 'chiba**:/data/hoge' 'imade**:/tmp/fuga'
+
+"""
+
+debug = True
+
+class EnvException(Exception):
+    def __init__(self, msg=None):
+        self.msg = msg
+    def __str__(self):
+        return "Error: %s"%(self.msg)
+
+
+class Env:
+    """
+public:
+    self.ipe
+    self.npe
+    self.hostname   : GXP hostname
+    self.addr       : Address ()
+
+ The followings are set when ipe == 0
+    self.srcs       : source map {src_hostname -> path}
+    self.dests      : destination map {dest_hostname -> path}
+    self.hosts      : hostnames acquired by GXP
+
+private:
+    self.src_specs   : source node specification list (host ptn, path)
+    self.dest_specs : destination node specification list (host ptn, path)
+    """
+    def __init__(self, hosts):
+        #self.set_gxp_vars()
+        #if self.ipe == 0:
+        self.hosts = hosts            
+        self.parse_opt()   # Parse args
+        self.match_hosts() # match hosts
+        
+    def get_gxp_dir(self):
+        def exec_cmd(cmd):
+            fp = popen2.Popen3(cmd).fromchild
+            s = fp.readline().rstrip()
+            fp.close()
+            return s
+        ret = exec_cmd("which ucpm")
+        return ret[:len(ret)-5]
+
+    
+    def parse_opt(self):
+        """ Parse commandline and set arguments (src, dest) """
+        def to_ptn(s):
+            if ":" not in s:
+                raise EnvException("Cannot parse '%s' in parseOpt()"%s)
+            host_expr,file_expr = s.split(":", 1)
+            return mk_host_regexp(host_expr),file_expr
+        # Commandline: gxpc mw ucp hongo000:/tmp/kay/hoge 'chiba**:/data/local/kay/'
+        
+        try:
+            opts, args = getopt.getopt(sys.argv[1:], "t:a:r:h", ["topology=", "actives=", "routing=", "help"])
+        except getopt.GetoptError:
+            usage()
+            raise EnvException("Failed to parse options")
+
+        # parse options
+        base = self.get_gxp_dir()
+        self.topology_fn = os.path.join(base, "ucp_topology.xml")
+        #self.topology_fn = '/home/kay/bhtree-1.0.2/output/74_bhtree.xml'
+        self.actives_fn = None
+        self.routing_fn = os.path.join(base, "ucp_routing.conf")
+        
+        for o, a in opts:
+            if o in ("-h", "--help"):
+                usage()
+                os._exit(0)
+            elif o in ("-t", "--topology"):
+                Es("Loading topology from: %s\n"%(a))
+                self.topology_fn = a
+            elif o in ("-a", "--actives"):
+                self.actives_fn = a
+            elif o in ("-r", "--routing"):
+                self.routing_fn = a
+            else:
+                usage()
+                raise EnvException("Failed to parse options")
+        
+        # parse src and dests
+        if len(args) == 0:
+            #Es("Please specify a broadcast job")
+            usage()
+            os._exit(0)
+        elif len(args) == 1:
+            Es("Please specify a broadcast job")
+            os._exit(0)
+            
+        self.src_specs = [to_ptn(args[0])]
+        self.dest_specs = []
+        for dest_expr in args[1:]:
+            self.dest_specs.append(to_ptn(dest_expr))
+
+
+    def match_hosts(self):
+        def match_spec(ptn, path, hosts, ret):
+            for h in hosts:
+                if ptn.match(h):
+                    if h in ret:
+                        print h, ret
+                        raise EnvException("Multiple expresstions is matched to one host(%s)"%h)
+                    ret[h] = path
+        # Source spec
+        self.srcs = {}  # source_host -> path
+        for src_ptn, src_path in self.src_specs:
+            match_spec(src_ptn, src_path, self.hosts, self.srcs)
+        if len(self.srcs) > 1:
+            raise EnvException("More than one source is matched")
+        elif len(self.srcs) == 0:
+            raise EnvException("No source has found")
+        
+        # Destination specs
+        self.dests = {} # dest_host -> path
+        for dest_ptn, dest_path in self.dest_specs:
+            match_spec(dest_ptn, dest_path, self.hosts, self.dests)
+        if len(self.dests) == 0:
+            raise EnvException("No destination has found")
+
+        # Remove src from dests
+        for s in self.srcs:
+            if s in self.dests:
+                del self.dests[s]
+                
+                
+############################################################
+# from ucpm
+############################################################
+
+PID_SHIFT = 10000
+
+class UCPMaster:
+    """
+    self.src_ptn, self.src_ptn: 
+    self.dest_ptn, self.dest_ptn: 
+    
+    """
+    MODE_INIT = 10
+    MODE_CONN = 11
+    MODE_TRANS = 12
+    def __init__(self, pretend=False):
+        #fn_actives = "actives"):
+        #def load_actives(fn):
+        #    ret = []
+        #    fp = open_for_read(fn)
+        #    for l in fp.readlines():
+        #        ret.append(l.strip())
+        #    return ret
+        self.debug = 0
+        self.mode = UCPMaster.MODE_INIT
+        self.comm = Comm(1,0)
+        self.log = Log("log.txt")
+        # Load hosts
+        self.handle_bind_msgs()
+        if self.debug > 2:
+            M("hosts: %s\n"%(str(self.hosts)))
+        self.log.write("hosts: %s\n"%(str(self.hosts)))
+        # Parse args
+        self.env = Env(self.hosts)
+        # Prepare routing planner
+        self.routing = Routing(self.env.routing_fn)
+        self.routing.trim(self.hosts)
+        # Plan transfers (transfers: {(src,dest):bw...})
+        transfer = (self.env.srcs.keys(), self.env.dests.keys(), self.hosts)
+        if self.debug >= 1:
+            msg =  "----------\n"
+            msg += "Source     : %s\n"%(str(transfer[0]))
+            msg += "Destination: %s\n"%(str(transfer[1]))
+            msg += "----------\n\n"
+            Es(msg)
+        self.multicast = MulticastPlanner(self.env.topology_fn,transfer)
+        self.multicast.stable()
+        self.schedule = self.multicast.schedule
+        
+        if TOUCHGRAPH_LOG_FN not in [None, ""]: #For Touchgraph
+            fp = open(TOUCHGRAPH_LOG_FN, "w")
+            for (s,d),v in self.schedule.transfers.items():
+                if v < 1: continue
+                dv = float(v) / 1000
+                #print >> sys.stderr, "edge %s -> %s dia=%f label=%dMbps end"%(s,d,dv,v)
+                print >> fp, "edge %s -> %s dia=%f end"%(s,d,v)
+                #print >> sys.stderr, "edge %s -> %s end"%(s,d)
+            fp.close()
+        
+        self.init_vars()
+
+        # Send file query (OK)
+        self.issue_file_query()
+        
+        # Wait for messages
+        self.msg_loop()
+
+        
+    def init_vars(self):
+        self.accepting_ipes = []
+        self.connecting_ipes = []
+        self.sending_ipes = []
+        self.recvsending_ipes = []
+
+        
+    def handle_files_msg(self, A):
+        def parse_files_msg(A):
+            """
+            FILES <ipe> <n_files> <filepath0> <size0> <filepath1> <size1> ...
+            """
+            ipe = atoi_ex(A[1], "ipe in FILES msg")
+            n_files = atoi_ex(A[2], "n_files in FILES msg")
+            files = []
+            for i in range(n_files):
+                filepath = A[i * 2 + 3]
+                size = A[i * 2 + 4]
+                files.append((filepath, size))
+            return ipe,files
+        
+        """ Handle FILES message (reply to FILE_MATCH) """
+        # File list has obtained
+        ipe,files = parse_files_msg(A)
+        if len(files) == 0:
+            Es("No file has matched")
+            self.abort_all()
+        #elif len(files)
+        self.files = files
+        # for debugging
+        if debug >= 1:
+            for f,s in self.files:
+                Es("%s "%f)
+            Es("\n\n")
+        # Establish Connections
+        self.establish_connections()
+        
+        
+    def establish_connections(self):
+        """
+        issue SOCKET and ACCEPT
+        
+        """
+        #assert self.mode == UCPMaster.MODE_INIT
+        mode = UCPMaster.MODE_CONN
+        sock_cmds = []
+        accept_list = {}
+        self.src_to_dests = {} # src -> [dest0, dest1, ...]
+                
+        for i,(src,dest) in enumerate(self.schedule.transfers.keys()):
+            # update src : [dest_list] mapping
+            if src not in self.src_to_dests: self.src_to_dests[src] = []
+            self.src_to_dests[src].append(dest)
+            
+            # Route the transfer (src -> dest)
+            route,ret_list = self.routing.getRoute(src,dest)
+            if route == Routing.FW:
+                sock_cmds.append((src,dest,i,True)) # True means forward
+                if dest in accept_list:
+                    accept_list[dest] += 1
+                else:
+                    accept_list[dest] = 1
+            elif route == Routing.BW:
+                sock_cmds.append((dest,src,i,False))
+                accept_list[src] += 1
+            elif route == Routing.Relay:
+                # Relay plan: ['imade-g', 'imade']
+                # Find matched host
+                relay_host_list = []
+                for label in ret_list:
+                    ptn = self.routing.ptns[label]
+                    # Find a host suitable for relaying
+                    for host in self.hosts: #TODO: need to randomize
+                        if ptn.match(host):
+                            relay_host_list.append(host)
+                            break
+                now_dest = src
+                for host in relay_host_list:
+                    now_src = now_dest
+                    now_dest = host
+                    sock_cmds.append((now_src,now_dest,i,True))
+                    #self.src_to_dests = {} # src -> [dest0, dest1, ...]
+                sock_cmds.append((now_dest,dest,i))
+                
+        if self.debug >= 1:
+            msg = "--------------------\n"
+            msg += "RELAY_PLAN\n"
+            for s,l in self.src_to_dests.items():
+                msg += "%s >> ["%s
+                for d in l:
+                    msg += "%s "%d
+                msg += "]\n"
+            msg += "--------------------\n"
+            Es(msg)
+
+        # Now, commands are ready to be issued
+        for dest,n_accepts in accept_list.items():
+            dest_ipe = self.hostname_to_ipe[dest]
+            self.issue_accept(dest_ipe, n_accepts)
+        
+        for src,dest,conn_id,direction in sock_cmds:
+            src_ipe = self.hostname_to_ipe[src]
+            dest_ipe = self.hostname_to_ipe[dest]
+            dest_addr = self.ipe_to_addrs[dest_ipe]
+            dest_port = self.ipe_to_port[dest_ipe]
+            pipeline_ids = []
+            for pid in self.schedule.link_usage[(src,dest)]:
+                if direction:
+                    pipeline_ids.append(pid)
+                else:
+                    pipeline_ids.append(PID_SHIFT + pid)
+
+            self.issue_socket(src_ipe, conn_id, dest_ipe, dest_addr, dest_port, pipeline_ids)
+        self.log.write("Issued every connection message\n")
+
+
+    def issue_accept(self, dest_ipe, n_accepts):
+        self.issue("ACCEPT %d %d\n"%(dest_ipe, n_accepts))
+        self.accepting_ipes.append(dest_ipe)
+
+
+
+    def issue_socket(self, src_ipe, conn_id, dest_ipe, dest_addr, dest_port, pipeline_ids):
+        """
+        SOCKET <ipe> <conn_id> <dest_ipe> <addr> <port> <n_pipelines> <id0> ...
+        """
+        msg_terms = ["SOCKET"]
+        msg_terms.append(str(src_ipe))
+        msg_terms.append(str(conn_id))
+        msg_terms.append(str(dest_ipe))
+        msg_terms.append(dest_addr)
+        msg_terms.append(str(dest_port))
+        msg_terms.append(str(len(pipeline_ids)))
+        for pid in pipeline_ids:
+            msg_terms.append(str(pid))
+        self.issue(" ".join(msg_terms) + "\n")
+        self.connecting_ipes.append((src_ipe,dest_ipe))
+
+        
+    def begin_transfers(self): #TODO
+        if self.debug >= 1:
+            M("Start transfers\n")
+        #assert mode == UCPMaster.MODE_CONN
+        self.mode = UCPMaster.MODE_TRANS
+        """
+        Issue transfer commands (send/recv)
+        
+        """
+        for src_name,src_path in self.env.srcs.items():
+            src_ipe = self.hostname_to_ipe[src_name]
+            self.src_path = src_path
+            self.issue_send(src_ipe, src_name, src_path)
+            break
+
+        for dest_name,dest_path in self.env.dests.items():
+            dest_ipe = self.hostname_to_ipe[dest_name]
+            self.issue_recvsend(dest_ipe, dest_name, dest_path)
+            
+
+
+    def issue_send(self, src_ipe, src_name, src_dir):
+        """
+        SEND <ipe> <dirpath> \
+        <n_files> <filename0> <filesize0> <filename1> <filesize1>... \
+        <n_pipelines> <bw0> <bw1> ...
+        """
+        # Start creating command
+        # """ SEND <ipe> <dirpath> """
+        cmd_terms = ["SEND"]
+        cmd_terms.append(str(src_ipe))
+        cmd_terms.append(src_dir)
+        
+        #""" <n_files> <filename0> <filesize0> <filename1> <filesize1>...  """
+        cmd_terms.append(str(len(self.files)))
+        for f,sz in self.files:
+            cmd_terms.append(f)
+            cmd_terms.append(sz)
+            
+        #""" <n_pipelines> <bw0> <bw1> ..."""
+        cmd_terms.append(str(len(self.schedule.pipelines)))
+        for bw in self.schedule.pipelines:
+            cmd_terms.append(str(bw))
+        # ALL OK
+        self.issue(" ".join(cmd_terms) + "\n")
+
+        # append ipe as src_host
+        self.sending_ipes.append(src_ipe)
+        
+
+    def issue_recvsend(self, dest_ipe, dest_name, dest_path):
+        """
+        RECVSEND <ipe> <dirpath>\
+        <n_files> <filename0> <filesize0> <filename1> <filesize1>... 
+        """
+        # RECVSEND <ipe> <dirpath>
+        cmd_terms = ["RECVSEND"]
+        cmd_terms.append(str(dest_ipe))
+        cmd_terms.append(dest_path)
+        
+        # <n_files> <filename0> <filesize0> <filename1> <filesize1>... \
+        cmd_terms.append(str(len(self.files)))
+        for f,sz in self.files:
+            if f == ".":
+                f = os.path.basename(self.src_path)
+                cmd_terms.append(f)
+            else:
+                cmd_terms.append(f)
+            cmd_terms.append(sz)
+        # ALL OK
+        self.issue(" ".join(cmd_terms) + "\n")
+        if dest_ipe not in self.recvsending_ipes:
+            self.recvsending_ipes.append(dest_ipe)
+            #M("rs_ipes: %s\n"%(str(self.recvsending_ipes)))
+
+        
+    def issue_file_query(self):
+        #for s in self.env.srcs: # TODO: for now, only support one source
+        for src_host,src_path in self.env.srcs.items():
+            src_ipe = self.hostname_to_ipe[src_host]
+            """
+            FILE_MATCH <ipe> <filepath_ptn>
+            """
+            cmd = "FILE_MATCH %d %s\n"%(src_ipe,src_path)
+            #if debug >= 1:
+            #    Es("Source path: %s:%s\n"%(src_host,src_path))
+            self.log.write("Issued: %s\n"%cmd)
+            self.issue(cmd)
+
+
+#     def write_plan(self):
+#         """ For offline debugging """
+#         print "Aggregate BW:", self.planned_bw
+#         for (src,dest),bw in self.scheduler.transfers.items():
+#             if bw < 5.0: continue
+#             print " (%s,%s): %d"%(src,dest,bw)
+
+
+    def msg_loop(self):
+        while True:
+            msg = self.comm.read().strip()
+            if msg == "":
+                M("At least one worker died\n")
+            A = msg.split()
+            """ List every message received from WORKERs """
+            if A[0] == "FILES":
+                self.handle_files_msg(A)
+            elif A[0] == "DONE":
+                self.handle_done_msg(A)
+            elif A[0] == "LOG":
+                self.handle_log_msg(A)
+            elif A[0] == "ACCEPT_DONE":
+                self.handle_accept_done(A)
+            elif A[0] == "CONNECT_OK":
+                self.handle_connect_ok(A)
+            elif A[0] == "SEND_DONE":
+                self.handle_send_done(A)
+            elif A[0] == "RECVSEND_DONE":
+                self.handle_recvsend_done(A)
+            elif A[0] == "POPUP":
+                self.handle_popup_msg(A)
+            else:
+                assert False
+                
+
+            
+    def abort_all(self):
+        self.issue("ABORT\n")
+        sys.exit()
+
+
+    def quit_all(self):
+        self.issue("QUIT\n")
+        sys.exit()
+
+
+
+    # HANDLE_MESSAGES
+    def handle_bind_msgs(self):
+        """
+        BIND <ipe> <npe> <short_hostname> <addr> <port>
+        0    1     2     3                4      5
+        """
+        def parse_bind_msg(msg):
+            A = msg.split()
+            if len(A) != 6: raise RuntimeException()
+            if A[0] != "BIND": raise MwException()
+            ipe = atoi_ex(A[1], "ipe in BIND msg")
+            npe = atoi_ex(A[2], "npe in BIND msg")
+            short_hostname = A[3]
+            addr = A[4]
+            port = atoi_ex(A[5], "port in BIND msg")
+            return ipe,npe,short_hostname,addr,port
+
+        self.hostname_to_ipe = {}
+        self.ipe_to_port = {}
+        self.ipe_to_addrs = {}
+        self.ipe_to_hostname = {}
+        self.npe = None
+        i = 0
+        while True:
+            msg = self.comm.read()
+            if msg == "": raise MyException("Master received empty message while collection BIND msgs")
+            ipe,npe,short_hostname,addr,port = parse_bind_msg(msg)
+            if self.npe == None: self.npe = npe
+            elif npe != self.npe: raise MyException("received npe does not match")
+            self.hostname_to_ipe[short_hostname] = ipe
+            self.ipe_to_hostname[ipe] = short_hostname
+            self.ipe_to_addrs[ipe] = addr
+            self.ipe_to_port[ipe] = port
+            i += 1
+            #M("ipe=%d, npe=%d\n"%(ipe,npe))
+            if i == self.npe: break
+        self.hosts = self.hostname_to_ipe.keys()
+
+
+    def handle_accept_done(self, A):
+        #assert self.mode == UCPMaster.MODE_CONN
+        """ ACCPET_DONE <ipe> """
+        ipe = atoi_ex(A[1], "ipe in ACCEPT_DONE msg")
+        self.accepting_ipes.remove(ipe)
+        if len(self.accepting_ipes) == 0 and len(self.connecting_ipes) == 0:
+            # issue send/recvsend messages
+            self.begin_transfers()
+
+
+    def handle_connect_ok(self, A):
+        #assert self.mode == UCPMaster.MODE_CONN
+        """ CONNECT_OK <ipe> <target_ipe> """
+        ipe = atoi_ex(A[1], "ipe in CONNECT_OK msg")
+        target_ipe = atoi_ex(A[2], "target_ipe in CONNECT_OK msg")
+        self.connecting_ipes.remove((ipe,target_ipe))
+        if len(self.accepting_ipes) == 0 and len(self.connecting_ipes) == 0:
+            # issue send/recvsend messages
+            self.begin_transfers()
+
+        
+    def handle_mw_msg(self, m):
+        hn,port = m.split()
+        port = atoi_ex(port, "port in mw msg")
+        self.host_port_map[hn] = port
+
+
+    def handle_send_done(self, A):
+        """ SEND_DONE <ipe> """
+        ipe = atoi_ex(A[1], "ipe in SEND_DONE msg")
+        total_sent = atoi_ex(A[2], "total_sent in SEND_DONE msg")
+        t = atof_ex(A[3], "t in SEND_DONE msg")
+        self.sending_ipes.remove(ipe)
+        hostname = self.ipe_to_hostname[ipe]
+        bw = float(total_sent)/t / 1000 / 1000  * 8
+        Es("Sending completed: %s, size: %dMB, bw: %fMbps"%(hostname, total_sent/1000/1000, bw))
+        if len(self.sending_ipes) == 0 and len(self.recvsending_ipes) == 0:
+            self.quit()
+
+
+    def handle_recvsend_done(self, A):
+        """ RECVSEND_DONE <ipe> <totalrcvd> <time>"""
+        ipe = atoi_ex(A[1], "ipe in RECVSEND_DONE msg")
+        total_rcvd = atoi_ex(A[2], "total_rcvd in RECVSEND_DONE msg")
+        t = atof_ex(A[3], "t in RECVSEND_DONE msg")
+        self.recvsending_ipes.remove(ipe)
+        if self.debug > 2:
+            M("RECVSEND_DONE from %d, s:%d, r:%d (%s)\n"\
+              %(ipe,len(self.sending_ipes),len(self.recvsending_ipes), str(self.recvsending_ipes)))
+        self.log.write("RECVSEND_DONE from %d, sending:%d, recving:%d\n"\
+          %(ipe,len(self.sending_ipes),len(self.recvsending_ipes)))
+        hostname = self.ipe_to_hostname[ipe]
+        bw = float(total_rcvd)/t / 1000 / 1000  * 8
+        Es("Receiving completed: %s, size: %dMB, bw: %fMbps\n"%(hostname, total_rcvd/1000/1000, bw))
+        if len(self.sending_ipes) == 0 and len(self.recvsending_ipes) == 0:
+            self.quit()
+
+    def handle_popup_msg(self, A):
+        """
+        POPUP <ipe> <msg>
+        0    1     2     
+        """
+        m = " ".join(A[2:])
+        Es(m.strip())
+    def issue(self,msg):
+        self.comm.write(msg)
+        if self.debug > 1:
+            M("Master issued: %s\n"%msg)
+        self.log.write("Master issued: %s\n"%msg)
+
+
+    def quit(self):
+        self.issue("QUIT\n")
+        M("Transfer has successfully finished\n")
+        self.log.write("Master has exitted\n")
+        time.sleep(0.5)
+        sys.exit(0)
+
+
+def usage(fp = sys.stderr):
+    print >> fp, """\
+Usage: gxpc mw ucp [OPTIONS] SRC_URI DEST_URI_0 DEST_URI_1 ...
+
+The ucp tool copies a file from one source to many other nodes.
+When the topology file is available, the transfer is efficiently
+planned. 
+
+Example
+$ ucp hongo000:/data/some_file chiba**:/data/local/some_path
+
+$ gxpc e --updown '3:4:ucpm hongo000:/data/some_file chiba**'/data/local/some_path' gxpw
+
+Options
+-t, --topology TOPOLOGY_FILE  : Specify the path to the topology file (Default: ucp_topology.xml)
+-r, --routing  ROUTING_PLAN   : Specify the relay planning file       (Default: ucp_routing.conf)
+-h, --help : Show this message
+
+File specification
+[hostname_pattern]:[file_path]
+
+"""
+#-a, --actives  HOSTS_FILE     : Specify the host file                 (Default: read from GXP)
+
+
+def main():
+    if len(sys.argv) < 3:
+        Es("Args error: %s"%str(sys.argv))
+        os._exit(0)
+    Es("Broadcast from %s to %s\n"%(sys.argv[1], sys.argv[2]))
+    master = UCPMaster(pretend=False)
+
+
+if __name__ == '__main__':
+    main()
+
+
+

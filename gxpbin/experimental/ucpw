@@ -1,0 +1,826 @@
+#!/usr/bin/env python
+# -*- python -*-
+
+import sys,time,os,select,mmap,random
+from ucp_common import *
+
+# Please set options in ucp_common.py
+
+############################################################
+# from sock.py
+############################################################
+"""
+'sock.py'
+Wrapped socket implementation
+
+- Socket
+- ServerSocket
+"""
+
+
+class Socket:
+    """
+       A smart socket with sendInt and sendString
+       
+    """
+    def __init__(self, sock=None, peer=None):
+        """ Create a socket """
+        """  peer : (hostname, port) """
+        if sock is None:
+            self.sock = socket.socket(\
+              socket.AF_INET, socket.SOCK_STREAM)
+        else:
+            self.sock = sock
+        self.peer = peer
+
+    
+    def connect(self, peer):
+        """ Establish a connection """
+        assert peer is not None
+        self.peer = peer
+        self.sock.connect(self.peer)
+        #Es("Connect OK %s -> %s\n"%(self.pper[0]))
+        if self.sock is None:
+            raise "Could not establish a connection to %s:%d"%(self.peer[0], self.peer[1])
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, SNDBUF_SIZE)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, RCVBUF_SIZE)
+        if debug >= 2:
+            Es("New connection to %s:%d\n"%(self.peer[0], self.peer[1]))
+
+        
+    def close(self):
+        """ Close the socket """
+        self.sock.close()
+
+        
+    def send(self, msg, msglen = -1):
+        """ Safe send() """
+        self.sock.sendall(msg)
+
+
+    def recv(self, msglen):
+        """ Safe recv() """
+        A = []
+        rcvd = 0
+        while rcvd < msglen:
+            chunk = self.sock.recv(msglen-rcvd)
+            if chunk == '':
+                raise socket.error("socket connection broken")
+            A.append(chunk)
+            rcvd += len(chunk)
+        return "".join(A)
+        #return self.sock.recvall(msglen)
+
+    def rawrecv(self, msglen):
+        return self.sock.recv(msglen)
+    
+    def rawsend(self, msg):
+        return self.sock.send(msg)
+
+    def sendInt(self, value):
+        self.send(struct.pack('i', value))
+
+    def recvInt(self):
+        msg = self.recv(struct.calcsize('i'))
+        return struct.unpack('i', msg)[0]
+
+    def sendString(self, msg, length = -1):
+        if length == -1: length = len(msg)
+        self.sendInt(length)
+        self.send(msg, length)
+        
+    def recvString(self):
+        msglen = self.recvInt()
+        return self.recv(msglen)
+
+        
+    
+class ServerSocket:
+    def __init__(self, initial_port = None):
+        """ Create a socket """
+        """  peer : (hostname, port) """
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        addr = my_gethostname()
+        if initial_port is not None:
+            self.port = initial_port
+            self.sock.bind(("", self.port))
+        else:
+            self.sock.bind(("",0))
+        self.sock.listen(5) # arg : number of backlog
+        #M("Listening on %s\n"%(str(self.sock.getsockname())))
+        self.port = self.sock.getsockname()[1]
+        
+    def accept(self):
+        conn,peer = self.sock.accept()
+        if debug >= 2 :
+            Es("Accepted from %s:%d\n"%(peer[0], peer[1]))
+        return Socket(sock=conn, peer=peer)
+
+
+    def close(self):
+        self.sock.close()
+
+
+############################################################
+# from data_source.py
+############################################################
+
+
+def ensure_dir(path):
+    """
+    ensure directory PATH exists, creating its ancestors if necessary
+    """
+    if os.access(path, os.F_OK):
+        ensure_dir_1(path)
+    elif path != "/":
+        ensure_dir(os.path.dirname(path))
+        ensure_dir_1(path)
+
+        
+def ensure_dir_1(dire):
+    """
+    ensure directory DIRE exists, assuming its direct parent directory
+    exists.
+    i.e., if dire = 'a/b/c', we assume a/b exists
+    """
+    if not os.access(dire, os.F_OK):
+        try:
+            os.mkdir(dire)
+        except OSError:
+            pass
+    if not os.access(dire, os.F_OK):
+        M("Output directory %s does not exist and could not create it\n" \
+          % dire)
+        os._exit(1)
+    s = os.stat(dire)
+    if not stat.S_ISDIR(s[0]):
+        M("%s is not a directory %s\n" % dire)
+        sys.exit(1)
+    if not os.access(dire, os.W_OK):
+        M("Directory %s not writable\n" % dire)
+        sys.exit(1)
+
+
+class DataSource:
+    """
+    Open files and read/write data on them.
+    It also manages chunk assignment to trees
+    
+    """
+    R,RW = 0,1
+ 
+    def __init__(self, filepath, files, mode, chunksize= CHUNKSIZE):
+        assert mode in [DataSource.R, DataSource.RW]
+        self.chunksize = chunksize
+        self.filepath = filepath
+        self.files = files # [(rel_fn, size), ...]
+        self.init_vars()
+        self.open_all(mode)
+
+
+    def init_vars(self):
+        self.total_size = 0
+        for _,sz in self.files:
+            self.total_size += sz
+        self.n_chunks = int(math.ceil(float(self.total_size)/self.chunksize)) # Kiriage
+        self.chunk_mappings = [LARGE_VALUE] * self.n_chunks
+        # The last packet is possibly smaller than the others
+        self.current_stage = LARGE_VALUE
+        # LARGE_VALUE means 'Unsent' in source, 'Unreceived' in destinations
+
+            
+    def open_all(self, access):
+        if access == self.RW:
+            self.prepare_files()
+             
+        self.fds = []
+        for filename_quoted,filesize in self.files:
+             if filename_quoted == ".":
+                 abs_filename = self.filepath
+             else:
+                 filename = urllib.unquote_plus(filename_quoted)
+                 abs_filename = os.path.join(self.filepath, filename)
+             if filesize != os.path.getsize(abs_filename):
+                 raise MyException("Filesize of (%s) has been modified (%d to %d)"%(abs_filename, filesize, os.path.getsize(abs_filename)))
+             if access == DataSource.R:
+                 fd = open_for_read(abs_filename)
+             else:
+                 fd = open_for_readwrite(abs_filename)
+             self.fds.append(fd)
+
+
+    def close_all(self):
+        for fp in self.fds:
+            fp.close()
+            
+        
+    def get_chunk_id(self,requested_pid):
+        assert requested_pid < self.current_stage
+        for cid,pid in enumerate(self.chunk_mappings):
+            if pid != self.current_stage: continue
+            self.chunk_mappings[cid] = requested_pid
+            return cid 
+        return None 
+
+
+    
+    def has_chunk(self,chunk_id):
+        return self.chunk_mappings[chunk_id] != LARGE_VALUE
+
+        
+    def set_stage(self, stage):
+        self.current_stage = stage
+        
+        
+    def prepare_files(self):
+        """
+        Create required directory and assure the freespace
+        (for node that receives data)
+        """
+        def create_empty_file(filename, size):
+            fp = open_for_write(filename)
+            fp.seek(size-1)
+            fp.write('\0')
+            fp.close()
+            
+        for filename_quoted,filesize in self.files:
+            # Returned: like... /tmp/kay/hoge
+            if filename_quoted == ".":
+                abs_filename = self.filepath
+                create_empty_file(abs_filename, filesize)
+            else:
+                filename = urllib.unquote_plus(filename_quoted)
+                abs_filename = os.path.join(self.filepath, filename)
+                basedir = os.path.dirname(abs_filename)
+                ensure_dir(basedir)
+                create_empty_file(abs_filename, filesize)
+
+
+    def read_chunk(self, chunk_id):
+        return self.read(chunk_id*self.chunksize, min((chunk_id+1)*self.chunksize, self.total_size))
+
+
+    def write_chunk(self, chunk_id, chunk):
+        if self.has_chunk(chunk_id): return
+        self.chunk_mappings[chunk_id] = 0
+        if not PRETEND:
+            self.write(chunk_id*self.chunksize, chunk)
+
+
+    def read(self, start, end):
+        if PRETEND:
+            return [" " * (end-start)]
+        """ Get an array of fractions """
+        f_end = 0
+        ret_list = []
+
+        for file_id,(_,file_size) in enumerate(self.files):
+            f_start = f_end
+            f_end += file_size
+            if end <= f_start: break
+            read_start = max(start, f_start)
+            read_end = min(end, f_end)
+            if read_start >= read_end: continue
+            self.fds[file_id].seek(read_start-f_start)
+            A = self.fds[file_id].read(read_end-read_start)
+            assert len(A) == read_end - read_start
+            ret_list.append(A)
+        return ret_list
+
+    
+    def receive_completed(self):
+        """ return if receiving process has completed """
+        #M("%s\n"%(self.chunk_mappings.count(LARGE_VALUE)))
+        return LARGE_VALUE not in self.chunk_mappings
+
+
+    def get_n_unreceived(self):
+        """ return number of trees on which trnasfer is going on """
+        return self.chunk_mappings.count(LARGE_VALUE)
+
+    
+    def write(self, start, A):
+        if start + len(A) > self.total_size:
+            M("Invalid write: start = %d, len = %d, total = %d\n"%(start, len(A), self.total_size))
+            assert False
+        end = start + len(A)
+        f_end = 0
+        for file_id,(_,file_size) in enumerate(self.files):
+            f_start = f_end
+            f_end += file_size
+            if end <= f_start: break
+            if f_end <= start: continue
+            write_start = max(start, f_start)
+            write_end = min(end, f_end)
+            if write_start >= write_end: continue
+            fd = self.fds[file_id]
+            fd.seek(write_start - f_start)
+            fd.write(A[write_start-start:write_end-start])
+
+
+
+############################################################
+# from ucpw
+############################################################
+
+PID_SHIFT = 1000
+
+class UCPWorker:
+    """
+    It receives message from the UCPMaster, fetch file and relay files as ordered.
+    
+    """
+    def __init__(self):
+        self.t0 = time.time()
+        self.ds = None
+        self.debug = 1
+        self.set_gxp_vars()
+        self.comm = Comm(3,4)
+        self.bind()        # Bind and issue "BIND" command and start accepting
+        self.init_vars()   # 
+        self.msg_loop()    # Msg loop
+        
+        
+    ###########################
+    #--- Preparing Functions
+    ###########################
+    def set_gxp_vars(self):
+        self.ipe = int(os.environ["GXP_EXEC_IDX"])
+        self.npe = int(os.environ["GXP_NUM_EXECS"])
+        self.hostname = os.environ["GXP_HOSTNAME"]
+        self.addr = my_getaddr() # Get global addrd
+        
+        
+    def bind(self):#OK
+        """ Prepare a server socket """
+        self.ss = ServerSocket()
+        self.accepted = 0
+        self.n_accepts = -1
+        # Issue "BIND" command
+        #  BIND <ipe> <npe> <long_hostname> <port>
+        self.issue("BIND %d %d %s %s %d\n"%(self.ipe, self.npe, self.hostname, self.addr, self.ss.port))
+        
+        
+        
+    def init_vars(self):
+        self.pipes = {} # rawsock -> [pipeline_id]
+        self.r_socks = [self.comm.from_fno] 
+        self.pipe_id_to_sock = {}
+        self.recvsend_done_issued = False
+        self.recv_started = False
+        self.total_rcvd = 0
+        self.total_sent = 0
+
+
+    ########################
+    #--- Util Functions 
+    ########################
+    def issue(self, cmd):
+        """ Issue a command """
+        if self.debug > 1:
+            M("Worker issued %s\n"%cmd)
+        self.comm.write(cmd)
+
+
+    ########################
+    #--- Main Loop
+    ########################
+    def msg_loop(self):
+        try:
+            while True:
+                # rs: from_all, ss, socks
+                rs,ws,es = select.select(self.r_socks, [], [], 1.0)
+
+                for fd in rs:
+                    if fd == self.comm.from_fno:
+                        self.handle_mw()
+                    elif fd == self.ss.sock.fileno():
+                        self.accept()
+                    else:
+                        self.recv_data(fd)
+        except socket.error,e:
+            #M(str(e))
+            sys.exit(0)
+            
+            
+    ########################
+    #--- Handle MW Messages
+    ########################
+    def handle_mw(self):
+        msg = self.comm.read()
+        A = msg.split()
+        if len(A) == 0:
+            raise MWException()
+        
+        if len(A) == 1:
+            if A[0] == "ABORT":
+                """ terminate """
+                if self.debug > 1:
+                    Es("Received ABORT msg, terminates\n")
+                sys.exit(1)
+            elif A[0] == "QUIT":
+                """ terminate """
+                time.sleep(0.5)
+                if self.ds is not None:
+                    self.ds.close_all()
+                os._exit(0)
+            else:
+                raise MWException("")
+            
+        ipe = atoi_ex(A[1], "ipe in mw msg")
+        if ipe != self.ipe: return
+        if A[0] == "FILE_MATCH": #OK
+            self.handle_file_match_msg(A[2:])
+        
+        # --- Messages to Establish Connections
+        elif A[0] == "SOCKET": #OK
+            self.handle_socket_msg(A[2:])
+        elif A[0] == "SSH":
+            raise "Not Implemented Yet"
+            self.handle_ssh_msg(A[2:])
+        elif A[0] == "ACCEPT":
+            self.handle_accept_msg(A[2:])
+            
+        # --- Messages to Actually Transfer Data
+        elif A[0] == "SEND": #OK
+            self.handle_send_msg(A[2:])
+        elif A[0] == "RECVSEND":
+            self.handle_recvsend_msg(A[2:])
+
+        # --- Error
+        else:
+            raise MWException("Command %s is not implemented yet\n"%(A[0]))
+            assert False # For now
+            
+            
+    #--------------------------------------
+    def handle_file_match_msg(self, A):
+        def filelist(ptn0):
+            # Get files under some directory
+            # ret = filelist("~/ucp")
+            ptn1 = os.path.expanduser(ptn0)
+            ptn = os.path.abspath(ptn1)
+            if os.path.isfile(ptn):
+                if not os.access(ptn, os.R_OK): return []
+                size = os.path.getsize(ptn)
+                return [(".", size)]
+            if os.path.isdir(ptn):
+                # ptn never ends with '/'
+                ret = []
+                for root, dirs, files in os.walk(ptn):
+                    A = root.split(ptn, 1)
+                    assert A[0] == ''
+                    if A[1] == "":
+                        rel_root = ""
+                    else:
+                        rel_root = A[1][1:]
+                    for f in files:
+                        f2 = os.path.join(root, f)
+                        if os.path.isfile(f2):
+                            if os.access(f2, os.R_OK):
+                                size = os.path.getsize(f2)
+                                ret.append((os.path.join(rel_root, f), size))
+                return ret
+            return []
+        filepath_ptn = A[0]
+        files = filelist(filepath_ptn)
+        """ FILES <ipe> <n_files> <filepath0> <size0> <filepath1> <size1> ...
+            When the target pattern is a file, filepath is set to '.'
+        """
+        n_files = len(files)
+        msgs = ["FILES", "%d"%self.ipe, "%d"%n_files]
+        for f,s in files:
+            f_quoted = urllib.quote_plus(f)
+            msgs.append(f_quoted)
+            msgs.append("%d"%s)
+        msg = " " .join(msgs) + "\n"
+        self.issue(msg)
+        
+
+    
+    def handle_socket_msg(self, A): #OK
+        """ SOCKET <ipe> <conn_id> <dest_ipe> <addr> <port> <n_pipelines> <id0> ...
+        0         1          2      3      4
+            when pipeline_id is more than PID_SHIFT, it means the connection is used in a backward manner
+        """
+        # Parse args
+        conn_id = atoi_ex(A[0], "conn_id")
+        dest_ipe = atoi_ex(A[1], "dest_ipe")
+        addr = A[2]
+        port = atoi_ex(A[3], "port")
+
+        f_pipes = []
+        b_pipes = []
+        n_pipes = atoi_ex(A[4], "n_pipelines")
+        for i in range(n_pipes):
+            pipe_id = atoi_ex(A[i+5], "pipeline_id")
+            if pipe_id >= PID_SHIFT:
+                b_pipes.append(pipe_id - PID_SHIFT)
+            else:
+                f_pipes.append(pipe_id)
+        # Perform connect and register connection
+        sock = Socket()
+        sock.connect(peer = (addr, port))
+        if debug > 1:
+            M("Connection established between ipe=%d, addr=%s\n"%(dest_ipe,addr))
+        """
+        <connected_ipe> <n_pipelines> <id0> <id1> ...
+        
+        """
+        sock.sendInt(self.ipe)
+        if len(f_pipes) > 0:
+            sock.sendInt(0)
+        else:
+            sock.sendInt(len(b_pipes))
+            for pipe_id in b_pipes:
+                sock.sendInt(pipe_id)
+        
+        self.pipes[sock.sock] = f_pipes
+
+        for pipe_id in f_pipes:
+            assert pipe_id not in self.pipe_id_to_sock
+            self.pipe_id_to_sock[pipe_id] = sock
+        self.issue("CONNECT_OK %d %d\n"%(self.ipe, dest_ipe))
+        
+
+
+    def handle_ssh_msg(self, A):
+        #TODO
+        """ SSH <ipe> <target_ipe> <username> <n_names> <sshname0> <sshname1> ... """
+        # Parse args
+        target_ipe = atoi_ex(A[0], "target_ipe")
+        n_names = atoi_ex(A[1], "n_names")
+        if n_names == 0: raise MyException("n_names is 0, no available name to ssh")
+        ssh_names = []
+        for i in range(n_names):
+            ssh_names.append(A[i+2])
+        # Perform SSH and register connection for each ssh_name
+        raise "Not Implemented Yet"
+
+
+
+    def handle_accept_msg(self, A):
+        # Start selecting the serverSock
+        self.r_socks.append(self.ss.sock.fileno())
+        self.n_accepts = atoi_ex(A[0], "n_accepts")
+
+        
+    def check_accept_done(self):
+        if self.accepted == self.n_accepts:
+            self.issue("ACCEPT_DONE %d\n"%(self.ipe))
+            self.r_socks.remove(self.ss.sock.fileno())
+        
+
+    def accept(self):
+        """
+        accept selected ServerSocket
+        """
+        assert self.n_accepts != self.accepted
+        sock = self.ss.accept()
+        """
+        <connected_ipe> <n_pipelines> <id0> <id1> ...
+        
+        """
+        ipe = sock.recvInt()
+        pipeid_list = []
+        n_pipes = sock.recvInt()
+        for i in range(n_pipes):
+            pipe_id = sock.recvInt()
+            pipeid_list.append(pipe_id)
+
+        self.pipes[sock.sock] = pipeid_list
+        
+        for pipe_id in pipeid_list:
+            assert pipe_id not in self.pipe_id_to_sock
+            self.pipe_id_to_sock[pipe_id] = sock
+
+        self.accepted += 1
+        assert self.n_accepts != -1
+        self.check_accept_done()
+
+        
+    def handle_send_msg(self, A):
+        """
+        SEND <ipe> <dirpath> \
+        <n_files> <filename0> <filesize0> <filename1> <filesize1>... \
+        <n_pipelines> <bw0> <bw1> ...
+        
+        """
+        def parse_args(A):
+            dirpath = A[0]
+            n_files = atoi_ex(A[1], "n_files")
+            index = 2
+            files = []
+            for i in range(n_files):
+                filename = A[index]
+                filesize = atoi_ex(A[index + 1], "filesize")
+                files.append((filename, filesize))
+                index += 2
+                
+            pipes = []
+            n_pipes = atoi_ex(A[index], "n_pipes")
+            index += 1
+            for i in range(n_pipes):
+                bw = atof_ex(A[index], "pipeline_bw")
+                pipes.append(bw)
+                index += 1
+            return dirpath,files,pipes
+        
+        def calc_pipe_id_rates(pipes):
+            pipe_id_rates = [] # A total of this list equals 10
+            bw_sum = sum(pipes)
+            chunks_per_a_loop = 100 - len(pipes)
+            bw_tmp = 0
+            prev_cc = 0
+            for pipe_id, bw in enumerate(pipes):
+                bw_tmp += bw
+                cc = int(chunks_per_a_loop * bw_tmp / bw_sum) + pipe_id + 1
+                pipe_id_rates.append((cc - prev_cc))
+                prev_cc = cc
+            return pipe_id_rates
+        
+        ### Parse args
+        dirpath,files,pipes = parse_args(A)
+        self.ds = DataSource(dirpath, files, DataSource.R)
+        
+        ## Prepare pipe_id_rates (rate for each pipeline)
+        pipe_id_rates = calc_pipe_id_rates(pipes)
+            
+        # Send chunks in a proportional rate to pipe_id_rates
+        n_pipes = len(pipes)
+        if debug >= 1:
+            Es("---------------------")
+            Es("N_PIPES=%d\n"%(n_pipes))
+            Es("pipe_id_rates = %s\n"%(str(pipe_id_rates)))
+            Es("---------------------")
+        self.t1 = time.time()
+        self.serial_send(pipe_id_rates)
+        if TIME_1:
+            t = time.time() - self.t1
+        else:
+            t = time.time() - self.t0
+        if self.total_sent != self.ds.total_size:
+            M("Error: Sent size: %d, total size: %d\n"%(self.total_sent, self.ds.total_size))
+        self.issue("SEND_DONE %d %d %f\n"%(self.ipe, self.total_sent, t))
+
+
+
+#     def serial_send_0(self, pipe_id_rates):
+#         w_socks = []
+#         for s in self.pipe_id_to_sock.values():
+#             w_socks.append(s.sock)
+            
+#         for stage in range(len(pipe_id_rates), 0, -1):
+#             if self.debug >= 1:
+#                 M("Stage %d/%d\n"%(stage,len(pipe_id_rates)))
+#             breakflag = False
+#             while True:
+#                 _,ws,_ = select.select([], w_socks, [], None)
+#                 for rawsock in ws:
+#                     pipe_id_list = self.pipes[rawsock]
+#                     pipe_id = pipe_id_list[random.randint(0,len(pipe_id_list)-1)]
+#                     if pipe_id >= stage: continue
+#                     chunk_id = self.ds.get_chunk_id(pipe_id)
+#                     if chunk_id is None:
+#                         breakflag = True
+#                         break
+#                     sock = self.pipe_id_to_sock[pipe_id]
+#                     self.actually_send(pipe_id, chunk_id, sock)
+#                 if breakflag: break
+#             s = self.pipe_id_to_sock[stage-1]
+#             w_socks.remove(s.sock)
+#             self.ds.set_stage(stage-1)
+    
+
+    def serial_send(self, pipe_id_rates):
+        count = 0
+        for stage in range(len(pipe_id_rates), 0, -1):
+            if self.debug >= 2:
+                M("Entering stage %d\n"%stage)
+            breakflag = False
+            while True:
+                for pipe_id,rate in enumerate(pipe_id_rates):
+                    if pipe_id >= stage: continue
+                    # Pick up the sock
+                    sock = self.pipe_id_to_sock[pipe_id]
+                    for i in range(rate):
+                        chunk_id = self.ds.get_chunk_id(pipe_id)
+                        if chunk_id is None:
+                            breakflag = True
+                            break
+                        if self.debug >= 2:
+                            M("Stage %d: Chunk [%d] for pipeline %d \n"%(stage,start/self.ds.chunksize,pipe_id))
+                        self.actually_send(pipe_id, chunk_id, sock)
+                        count += 1
+                        if count % 10 == 0:
+                            self.comm.write("POPUP %d #\n"%(self.ipe))
+                    if breakflag: break
+                if breakflag: break
+            self.ds.set_stage(stage-1)
+    
+
+
+    def actually_send(self, pipe_id, chunk_id, sock, data=None):
+        """
+        >> <pipe_id> <cid>
+        << <1 or 0>
+        1>>
+        <msg_size> <data>
+        0 >>
+        (do nothing)
+        """
+        sock.sendInt(pipe_id)
+        sock.sendInt(chunk_id)
+        need_more = sock.recvInt()
+        if need_more == 1:
+            if data is None:
+                data = self.ds.read_chunk(chunk_id)
+            size = 0
+            for A in data:
+                size += len(A)
+            sock.sendInt(size)
+            for A in data:
+                sock.send(A)
+            self.total_sent += size
+
+
+    def actually_recv(self, sock):
+        pipe_id = sock.recvInt()
+        chunk_id = sock.recvInt()
+        if self.ds.has_chunk(chunk_id):
+            sock.sendInt(0)
+            return pipe_id,chunk_id,None
+        sock.sendInt(1)
+        size = sock.recvInt()
+        data = sock.recv(size)
+        self.total_rcvd += len(data)
+        return pipe_id,chunk_id,data
+        
+
+    def handle_recvsend_msg(self, A):
+        """
+         RECVSEND <ipe> <dirpath>\
+         <n_files> <filename0> <filesize0> <filename1> <filesize1>... 
+         """
+        def parse_args(A):
+            dirpath = A[0]
+            n_files = atoi_ex(A[1], "n_files")
+            index = 2
+            # Parse files 
+            files = []
+            for i in range(n_files):
+                filename = A[index]
+                filesize = atoi_ex(A[index + 1], "filesize")
+                files.append((filename, filesize))
+                index += 2
+            return dirpath,files
+        dirpath,files = parse_args(A)
+        self.ds = DataSource(dirpath,files, DataSource.RW)
+        for rawsock in self.pipes:
+            self.r_socks.append(rawsock)
+        
+
+    
+    def recv_data(self, rawsock):
+        """
+        Receive data from `sock'
+        Protocol: <pipe_id> <start> <end> <data>
+        """
+        sock = Socket(sock=rawsock)
+        if not self.recv_started:
+            if self.debug > 1:
+                M("Starting to receive data\n")
+            self.recv_started = True
+            self.t1 = time.time()
+                    
+        pipe_id,chunk_id,data = self.actually_recv(sock)
+        if self.debug >= 2:
+            M("Got chunk[%d] from pipeline %d\n"%(chunk_id,pipe_id))
+        self.ds.write_chunk(chunk_id, data)
+        
+        # Relay
+        if pipe_id in self.pipe_id_to_sock:
+            sock = self.pipe_id_to_sock[pipe_id] 
+            if data is None:
+                self.actually_send(pipe_id, chunk_id, sock)
+            else:
+                self.actually_send(pipe_id, chunk_id, sock, [data])
+
+        if not self.recvsend_done_issued:
+            if not self.ds.receive_completed(): return
+            if TIME_1:
+                t = time.time() - self.t1
+            else:
+                t = time.time() - self.t0
+            assert self.total_rcvd == self.ds.total_size
+            self.issue("RECVSEND_DONE %d %d %f\n"%(self.ipe,self.total_rcvd,t))
+            self.recvsend_done_issued = True
+
+        
+
+def main():
+    worker = UCPWorker()
+
+
+if __name__ == '__main__':
+     main()

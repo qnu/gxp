@@ -1,0 +1,13 @@
+#!/usr/bin/env python
+# Copyright (c) 2010 by Kenjiro Taura. All rights reserved.
+
+import sys
+import read_helper
+
+def main():
+    filename = sys.argv[1]
+    f,n = eval(sys.argv[2])
+    read_helper.read_records(filename, f, n, starter=":::BEG::: ")
+
+main()
+

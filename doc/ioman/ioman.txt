@@ -1,0 +1,228 @@
+
+== what is ioman.py ==
+
+ioman.py is a module to make IO and child process management easy for
+your app.
+
+When you run a program that maintains connections to other processes,
+pipes, and/or child processes, you often encounter a situation in
+which you want to react to any of interesting events.  For excample,
+you want to notice that a packet arrives at a socket, a packet arrives
+at a pipe, a child process terminates, a socket now becomes writable
+(ready for getting accepting data), etc.
+
+ioman.py makes such event-driven programs easy for your python
+program.  The central class is ioman, which has methods to register
+your file descriptors or sockets to watch.  There is also a method to
+spawn a child process with pipes connecting to it and being watched
+automatically.
+
+== A minimum example ==
+
+Here is the minimum example.
+
+1 import ioman
+2 m = ioman.ioman()
+3 ch_stdin = m.add_read_fd(0)
+4 ch_stdin.set_expected(["\n"])
+5 while 1:
+6     ch,ev = m.process_an_event()
+7     print "read from stdin (kind=%d) [%s]" % (ev.kind, ev.data)
+8     if ev.kind == ioman.ch_event.EOF: break
+
+    
+This example is a program that repeats reading from its
+standard input (file descriptor 0).
+
+The first thing it does is to create an IO manager instance at line 2.
+
+At line 3, it registers its stdin (file descriptor zero) to the IO manager,
+so that it watches the stdin.  You receive a channel object.
+
+The line 4 says this channel should return an event when a new line is
+read from that channel.  Never forget this.  If you forget it, the
+default behavior is to return an event when an EOF is received.  This
+may cause a confusion.
+
+The line 5 starts the event-drieven loop.
+
+The line 6 is the main API, which waits for any "interesting event" to
+occur.  In this example, since you only have a single channel, the
+only event that can possibly return is an event indicating data
+containing a newline arrived at the standard input.  So, the line 6
+returns when you input something to the terminal and press ENTER.
+
+The return value of process_an_event is a tuple (channel,event).  The
+first component is the channel on which the event happens.  The event
+is a data structure describing what happened.  In general, it is an
+instance of one of subclasses of ioman.event class.  Please consult
+ioman.py to see what kind of events exist.
+
+In this example, ev should be an instance of ioman.revent class, which
+notifies the program of a read event.  A read event has two fields .data
+and .kind, with the former indicating the payload of the read data, and
+the latter being one of the following three values.
+
+(i) ioman.ch_event.OK   : you successfully got data and data may continue
+(ii) ioman.ch_event.EOF : you encountered EOF
+(iii) ioman.ch_event.IO_ERROR : some error happen. message is available via ev.err_msg
+
+Note that even if ev.kind == ioman.ch_event.EOF, ev.data may not be
+empty; in other words, you may receive a single event indicating you
+got some data, followed by EOF.  
+
+== managing subprocesses ==
+
+Next let me show you how to manage subprocesses.
+
+1  import ioman
+2  m = ioman.ioman()
+3  proc = m.make_child_proc(["hostname"])
+4  for ch in proc.r_channels.values():
+5      ch.set_expected("\n")
+6  dead = 0
+7  eof = 0
+8  while dead < 1 or eof < 2:      # stdout and stderr
+9      ch,ev = m.process_an_event()
+10     if isinstance(ch, ioman.rchannel_wait_child):
+11         p = ev.dead_processes[0]
+12         print ("process %s dead with status %d" 
+13                % (p, p.term_status))
+14         dead += 1
+15     elif isinstance(ch, ioman.rchannel):
+16         print "read from process (kind=%d) [%s]" % (ev.kind, ev.data)
+17         if ev.kind == ioman.ch_event.EOF: 
+18             eof += 1
+
+
+A new method you learn is make_child_proc at line 3, which takes a
+list of string as the command line.  It forks a child process,
+connecting to its stdin, stdout, stderr to the parent via pipe.  It
+returns a process object.  Pipes connecting to the child are
+automatically registered to the IO manager, so that the following
+calls to process_an_event will watch these pipes too.  In addition, it
+internally creates a channel to notify you of the death of the child
+process.
+
+In line 4 and 5, we again say we like to receive an event as soon as a
+newline arrives.  proc.r_channels represent two channels,
+corresponding to the child's stdin and stderr.
+
+At line 8, we now enter the main event-driven loop.
+
+The child's death is handled in line 10-14.  When it happens,
+process_an_event returns a channel of special type
+ioman.rchannel_wait_child and event contains the field dead_processes.
+It is a list of process objects whose deaths are detected this time
+(note that the system returns multiple processes in a single event).
+
+When the child process outputs something to its stdout or stderr, the
+message is handled in line 15-18, in a way similar to our previous
+example.
+
+Note that the exit condition of the loop.  We wait until (i) an event
+arrives at the channel watching the child's death and (ii) TWO
+end-of-file event arrive, one from stdout and the other from stderr.
+
+This example can be trivially exntended to handling multiple processes.
+
+import ioman
+m = ioman.ioman()
+n_procs = 2
+for i in range(n_procs):
+    proc = m.make_child_proc(["python", "hello.py", "%f" % (i+2.0) ])
+    for ch in proc.r_channels.values():
+        ch.set_expected("\n")
+dead = 0
+eof = 0
+while dead < n_procs or eof < n_procs * 2: # *2 because stdout and stderr
+    ch,ev = m.process_an_event()
+    if isinstance(ch, ioman.rchannel_wait_child):
+        for p in ev.dead_processes:
+            print ("process %s dead with status %d" 
+                   % (p, p.term_status))
+            dead += 1
+    elif isinstance(ch, ioman.rchannel):
+        print "read from process (kind=%d) [%s]" % (ev.kind, ev.data)
+        if ev.kind == ioman.ch_event.EOF: 
+            eof += 1
+
+== managing sockets ==
+
+The following illustrates how you write a simple socket server, which
+opens a server socket, via which you accept connections from clients,
+keeps waiting for a new client to connect to it or new data from
+existing connections to arrive.
+
+
+1  import ioman
+2  m = ioman.ioman()
+3  ch_sock = m.make_server_sock(socket.AF_INET, socket.SOCK_STREAM, ("",0), 1)
+4  ip,port = ch_sock.getsockname()
+5  print "server listening on %s, please connect to it (perhaps by 'nc localhost %d')" % (port, port)
+6  connected = 0
+7  disconnected = 0
+8  while connected == 0 or disconnected < connected:
+9      ch,ev = m.process_an_event()
+10     if isinstance(ev, ioman.aevent):
+11         print "got connection. add to watch list"
+12         rch,wch = m.add_sock(ev.new_so)
+13         rch.set_expected(["\n"])
+14         connected += 1
+15     elif isinstance(ev, ioman.revent):
+16         print "got from client (kind=%d) [%s]" % (ev.kind, ev.data)
+17         if ev.kind == ioman.ch_event.EOF:
+18             disconnected += 1
+
+When you run this program, it outputs a line saying its listening port
+number, like this.
+
+	server listening on 33570, please connect to it (perhaps by 'nc localhost 33570')
+
+Then, you should use another program to connect to the server.  The easiest is 
+to use netcat (nc) command.  If you have nc installed in your machine just do:
+
+        nc localhost 33570
+
+The server indicates it got a connection at line 11.  After connected,
+you may feed any string to nc, which forwards it to the server, which
+in turn should print it at line 16.  You may quit (kill) nc by Ctrl-C.
+You may connect to the same port from many clients.  The server quits
+when all clients quit.
+
+After these examples, you can easily write a program that manages BOTH
+child processes and sockets.
+
+== managing connections ==
+
+Finally, the example below illustrates how to write a socket client.
+
+1  import ioman
+2  m = ioman.ioman()
+3  rch,wch = m.make_client_sock(socket.AF_INET, socket.SOCK_STREAM, ("localhost", 10000))
+4  rch.set_expected(["\n"])
+5  wch.write_stream("abc\n")
+6  eof = 0
+7  while eof < 1:
+8      ch,ev = m.process_an_event()
+9      print ch,ev
+10     if isinstance(ev, ioman.wevent):
+11         pass
+12     elif isinstance(ev, ioman.revent):
+13         print "got from server (kind=%d) [%s]" % (ev.kind, ev.data)
+14         if ev.kind == ioman.ch_event.EOF:
+15             eof += 1
+
+The new method you should learn is make_client_socket.  Meaning of
+arguments will be obvious.  It returns a pair of sockets, rch for
+reading, wch for writing (line 3).
+
+At line 4, we again say we like to receive an event when a newline
+arrives.  
+
+At line 5, it sends a message to the server.
+
+The main event-driven loop will be already familiar to you.
+
+
+

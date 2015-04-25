@@ -1,0 +1,203 @@
+#!/usr/bin/env python
+# Copyright (c) 2009 by Kenjiro Taura. All rights reserved.
+# Copyright (c) 2008 by Kenjiro Taura. All rights reserved.
+# Copyright (c) 2007 by Kenjiro Taura. All rights reserved.
+# Copyright (c) 2006 by Kenjiro Taura. All rights reserved.
+# Copyright (c) 2005 by Kenjiro Taura. All rights reserved.
+#
+# THIS MATERIAL IS PROVIDED AS IS, WITH ABSOLUTELY NO WARRANTY 
+# EXPRESSED OR IMPLIED.  ANY USE IS AT YOUR OWN RISK.
+# 
+# Permission is hereby granted to use or copy this program
+# for any purpose,  provided the above notices are retained on all 
+# copies. Permission to modify the code and to distribute modified
+# code is granted, provided the above notices are retained, and
+# a notice that the code was modified is included with the above
+# copyright notice.
+#
+# $Header: /cvsroot/gxp/gxp3/gxpbin/consub,v 1.4 2010/03/05 05:27:09 ttaauu Exp $
+# $Name:  $
+#
+
+import errno,os,string,sys
+import opt2
+dbg = 0                                 # overwrite it by --dbg
+def Ws(s):
+    sys.stdout.write(s)
+
+def Es(s):
+    sys.stderr.write(s)
+
+#
+# csub.py [--condor_submit condor_submit]
+#         [--descriptor condor_descriptor]
+#         {--descriptor_command condor_descriptor_command}*
+#         shell_script
+#         -- condor_submit_options ...
+#
+#
+
+def build_client_env(vars):
+    V = [ "PATH", "PYTHONPATH", "HOME", "USER", "LOGNAME" ]
+    for v in vars:
+        if v not in V:
+            V.append(v)
+    E = []
+    for v in V:
+        val = os.environ.get(v)
+        if val is not None:
+            E.append("%s=%s" % (v, val))
+    return string.join(E, ";")
+
+def mk_condor_desriptor(shell_script, descriptor_file, descriptor_cmds, env):
+    default_cmds = r"""universe = vanilla
+environment = %s
+""" % build_client_env(env)
+    
+    default_cmds = r"""universe = vanilla
+"""
+    mandatory_cmds = r"""transfer_executable = true
+when_to_transfer_output = ON_EXIT
+executable = %s
+queue
+""" % shell_script
+
+    file_cmds = ""
+    if descriptor_file is not None:
+        fp = open(descriptor_file)
+        file_cmds = fp.read()
+        fp.close()
+
+    cmdline_cmds = string.join(descriptor_cmds, "")
+    return ("%s%s%s%s" 
+            % (default_cmds, file_cmds, cmdline_cmds, mandatory_cmds))
+
+
+def condor_submit_sh(shell_script, condor_submit, condor_opts,
+                     descriptor_file, descriptor_cmds, env):
+    """
+    send a shell script via condor_submit.
+    essentially, we feed condor_submit with the following.
+
+    transfer_executable = true
+    when_to_transfer_output = ON_EXIT
+    executable = shell_script
+    queue
+
+    arguments:
+    shell_script : the local path to the shell script
+    condor_submit : the path to condor_submit (or just "condor_submit" if
+                     it is in the path)
+    descriptor_file : if not None, it is the file having condor descriptors 
+                     in it (foo = var ...)
+    descriptor_cmds : list of condor descriptors ("foo = var")
+    condor_opts : list of options passed to condor submit
+    """
+    if dbg >=2:
+        Ws(("%s : shell_script = %s, condor_submit = %s, "
+            "descriptor_file = %s, descriptor_cmds = %s, "
+            "condor_opts = %s\n"
+            % (sys.argv[0], shell_script, condor_submit,
+               descriptor_file, descriptor_cmds,
+               condor_opts)))
+    r,w = os.pipe()
+    pid = os.fork()
+    if pid == 0:
+        # children. become condor_submit
+        cmd = [ condor_submit ] + condor_opts
+        os.close(w)
+        os.dup2(r, 0)
+        try:
+            os.execvp(cmd[0], cmd)
+        except OSError,e:
+            if e.args[0] == errno.ENOENT:
+                Es(("%s : could not execute '%s' (perhaps not in your PATH)\n"
+                    % (sys.argv[0], cmd[0])))
+                sys.exit(1)
+            raise
+    else:
+        if dbg>=2:
+            Ws("%s : condor_submit pid = %d\n" % (sys.argv[0], pid))
+        descriptor = mk_condor_desriptor(shell_script, descriptor_file, 
+                                         descriptor_cmds, env)
+        os.close(r)
+        if dbg>=1:
+            Ws((r"""%s : BEGIN descriptor sent to condor_submit:
+%s
+%s : END descriptor sent to condor_submit
+""" % (sys.argv[0], descriptor, sys.argv[0])))
+        os.write(w, descriptor)
+        os.close(w)
+        qid,status = os.waitpid(pid, 0)
+        assert pid == qid, (pid, qid)
+        return status
+
+class csub_cmd_opts(opt2.cmd_opts):
+    def __init__(self):
+        opt2.cmd_opts.__init__(self)
+        self.condor_submit = ("s", "condor_submit")
+        self.descriptor_file = ("s", None)
+        self.descriptor_cmd = ("s*", [])
+        self.env = ("s*", [])
+        self.dbg = ("i", 0)
+        self.f = "descriptor_file"
+        self.x = "descriptor_cmd"
+        self.e = "env"
+
+def usage(argv):
+    Es(r"""usage: 
+  %s [options]* shell_script [-- condor_submit_options*]
+options:
+  --condor_submit path_to_condor_submit_command
+  --descriptor condor_descriptor_file
+  --descriptor_command X=Y
+  --dbg 0/1/2
+""" % argv[0])
+
+def parse_args(argv):
+    """
+    argv : entire command line (including argv[0])
+    """
+    csub_args = []
+    condor_submit_args = []
+    A = csub_args
+    for a in argv[1:]:
+        if a == "--" and A is csub_args:
+            A = condor_submit_args
+        else:
+            A.append(a)
+    opts = csub_cmd_opts()
+    if opts.parse(csub_args) != 0:
+        usage(argv)
+        return None,None,None
+    if len(opts.args) != 1:
+        usage(argv)
+        return None,None,None
+    return opts,opts.args,condor_submit_args
+
+def main():
+    global dbg
+    opts,args,condor_args = parse_args(sys.argv)
+    if opts is None: return 1
+    dbg = opts.dbg
+    status = condor_submit_sh(args[0], opts.condor_submit, condor_args,
+                              opts.descriptor_file, opts.descriptor_cmd,
+                              opts.env)
+    if os.WIFEXITED(status):
+        return os.WEXITSTATUS(status)
+    else:
+        return 1
+        
+if __name__ == "__main__":
+    sys.exit(main())
+    
+# $Log: consub,v $
+# Revision 1.4  2010/03/05 05:27:09  ttaauu
+# stop extending PYTHONPATH. see 2010-3-5 ChangeLog
+#
+# Revision 1.3  2009/06/18 16:45:30  ttaauu
+# *** empty log message ***
+#
+# Revision 1.2  2009/06/18 00:32:18  ttaauu
+# condor support
+#

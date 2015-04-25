@@ -1,0 +1,1022 @@
+#!/usr/bin/env python 
+
+import errno,os,pwd,random,re,socket,string,sys,time
+import ifconfig,opt
+
+# ----------------------
+# see the end of the file for TODOs
+# ----------------------
+
+
+# ----------------------
+# real basic stuff
+# ----------------------
+
+def get_rank():
+    return int(os.environ.get("GXP_EXEC_IDX", "0"))
+
+def get_size():
+    return int(os.environ.get("GXP_NUM_EXECS", "1"))
+
+def Ws(s):
+    sys.stdout.write(s)
+    sys.stdout.flush()
+
+def Es(s):
+    sys.stderr.write(s)
+    sys.stdout.flush()
+
+def runcmd(cmd):
+    """
+    run cmd and get it's stdout
+    """
+    fp = os.popen(cmd)
+    output = fp.read()
+    ret = fp.close()
+    assert ret is None, ret
+    return output.strip()
+
+def ensure_dir_1(my_host, dir, opts):
+    """
+    ensure directory dir exists given its parent exists
+    """
+    if os.path.exists(dir):
+        if os.path.isdir(dir):
+            # directory already there
+            return 0
+        else:
+            # non-directory already there
+            Es("%s : %s is not a directory\n" % (my_host.h, dir))
+            return -1
+    # dir does not exist
+    parent,base = os.path.split(dir)
+    if os.path.exists(parent) and not os.access(parent, os.W_OK):
+        Es(("%s : could not create %s (%s unwritable)\n"
+            % (my_host.h, dir, parent)))
+        return -1
+    if opts.verbosity>=1:
+        Ws("%s : mkdir %s\n" % (my_host.h, dir))
+    if opts.check_only: return 0
+    try:
+        os.mkdir(dir)
+        return 0
+    except OSError,e:
+        if e.args[0] == errno.EEXIST:
+            return 0
+        else:
+            Es("%s : %s\n" % (my_host.h, e.args))
+            return -1
+    
+def ensure_dir(my_host, dir, opts):
+    """
+    ensure directory dir exists recursively
+    """
+    if dir == "/" or dir == "": return 0
+    parent,base = os.path.split(dir)            # a = "/a/b/c", b = "d"
+    assert len(parent) < len(dir), (parent, dir)
+    if ensure_dir(my_host, parent, opts) == -1:
+        return -1
+    return ensure_dir_1(my_host, dir, opts)
+    
+# ----------------------
+# things to exchange host contact info
+# ----------------------
+
+class Host:
+    def __init__(self, h, f, i, I, idx):
+        self.h = h              # hostname
+        self.f = f              # hostname -f
+        self.i = i              # hostname -i
+        self.I = I                      # list of all IP addresses
+        self.idx = idx
+
+    def __repr__(self):
+        return ("Host(%(h)r,%(f)r,%(i)r,%(I)r,%(idx)r)" % self.__dict__)
+
+    def match_regexp(self, regexp):
+        return regexp.match(self.f)
+
+def get_my_host():
+    idx = get_rank()
+    h = runcmd("hostname")
+    f = runcmd("hostname -f")
+    i = runcmd("hostname -i")
+    I = ifconfig.get_my_addrs()
+    return Host(h, f, i, I, idx)
+
+def get_all_hosts(wp, fp):
+    """
+    exchange hosts contact points.
+    return list of Host objects sorted in their 
+    GXP_EXEC_IDX order
+    """
+    # say my info
+    wp.write("%r\n" % get_my_host())
+    wp.flush()
+    hosts = []
+    # receive as many lines as the number of procs
+    for i in range(get_size()):
+        line = fp.readline()
+        assert line != ""
+        host = eval(line.strip())
+        hosts.append((host.idx, host))
+    # sort them in GXP_EXEC_IDX order
+    hosts.sort()
+    # remove indexes
+    return map(lambda (idx,host): host, hosts)
+
+def get_target_ip_address(target_host, my_host):
+    """
+    return most appropriate addr to connet to.
+    if gethostbyname succeeds, use it,
+    otherwise the first address in ifconfig result,
+    otherwise result of hostname -i.
+    """
+    for h in [ target_host.f, target_host.h ]:
+        try:
+            return socket.gethostbyname(h)
+        except socket.gaierror,e:
+            pass
+    for i in target_host.I:
+        return i
+    return target_host.i
+
+# ------------------
+# 
+# ------------------
+
+def send_msg_to_all(wp, msg):
+    wp.write(msg)
+    wp.write("\n")
+    wp.flush()
+
+def recv_msg(fp):
+    msg = fp.readline()
+    assert msg != ""
+    return msg
+
+def gxp_barrier(wp, fp, msg, n):
+    wp.write(msg)
+    wp.flush()
+    for i in range(n):
+        r = fp.readline()
+        if r == "": return -1
+    return 0
+
+    
+# ------------------
+# read edges file 
+# ------------------
+
+def read_edge_spec(opts):
+    """
+    read edges file and return edge_spec
+    (list of (src, dest, weight)).
+    """
+    edge_file = None
+    if opts.config is None:
+        # look for default edges file
+        for f in [ "mount_all_edges",
+                   os.path.expanduser("~/.mount_all_edges") ]:
+            if os.path.exists(f):
+                edge_file = f
+                break
+    else:
+        # see the specified edges file
+        if os.path.exists(opts.config):
+            edge_file = opts.config
+        else:
+            Es("error: specified edge file (%s) does not exist\n" % edge_file)
+            return None
+    edge_spec = []
+    # default
+    if edge_file is not None:
+        fp = open(edge_file, "rb")
+        for line in fp:
+            if line[0:1] == "#": continue
+            line = line.strip()
+            fields = line.split()
+            if len(fields) == 2:
+                [ s, w ] = fields
+                t = s
+            elif len(fields) == 3:
+                [ s, t, w ] = fields
+            elif len(fields) == 0:
+                continue
+            else:
+                Es("warning: invalid line (%s)\n" % line)
+                continue
+            edge_spec.append((s, t, int(w)))
+        fp.close()
+    else:
+        edge_spec.append((".*", ".*", 1))
+    return edge_spec
+
+# ------------------------------------------------
+# fuse primitives (sshfs, unionfs, fusermount -u)
+# ------------------------------------------------
+
+def sshfs_mount(my_host, target_host, export_dir, mount_point, opts):
+    """
+    my_host sshfs-mounts target_host:export_dir on mount_point
+    """
+    if target_host is None: return 0
+    a = get_target_ip_address(target_host, my_host)
+    if ensure_dir(my_host, mount_point, opts) == -1: return -1
+    if my_host is target_host:
+        if not os.path.exists(export_dir):
+            Es("%s : error: %s does not exist\n" % (my_host.h, export_dir))
+            return -1
+        elif not os.path.isdir(export_dir):
+            Es("%s : error: %s is not a directory\n" % (my_host.h, export_dir))
+            return -1
+        if os.path.exists(mount_point) and os.path.samefile(mount_point, export_dir):
+            # no need to mount
+            return 0
+    O = []
+    for o in opts.sshfs_opt + opts.fuse_opt:
+        O.append("-o %s" % o)
+    O = string.join(O, " ")
+    if opts.verbosity>=1:
+        Ws(("%s : sshfs %s[%s]:%s on %s %s\n"
+            % (my_host.h, target_host.h, a, export_dir, mount_point, O)))
+    if opts.check_only:
+        return os.system("which sshfs > /dev/null")
+    else:
+        for i in range(2):
+            syscmd = ("sshfs %s:%s %s %s 2>&1 | egrep -e ."
+                      % (a, export_dir, mount_point, O))
+            if i > 0:
+                Ws("%s : NG, retry %s\n" % (my_host.h, syscmd))
+                time.sleep(1)
+            if os.system(syscmd) != 0:
+                if opts.verbosity>=1 or i > 0:
+                    Ws("%s : OK\n" % my_host.h)
+                return 0
+        Ws("%s : NG %s\n" % (my_host.h, syscmd))
+        return 1
+
+def unionfs_mount(my_host, targets, mount_point, opts):
+    """
+    my_host unionfs-mounts targets directories on mount_point
+    """
+    true_targets = []
+    for t,check_dir in targets:
+        if check_dir:
+            if not os.path.exists(t):
+                Es("%s : error: %s does not exist\n" % (my_host.h, t))
+                return -1
+            elif not os.path.isdir(t):
+                Es("%s : error: %s is not a directory\n" % (my_host.h, t))
+                return -1
+        if opts.verbosity>=2:
+            Es("%s : mount_point is %s, t is %s\n" % (my_host.h, mount_point, t))
+        if os.path.exists(mount_point) and os.path.samefile(mount_point, t):
+            # no need to mount
+            continue
+        true_targets.append(t)
+    if len(true_targets) == 0: return 0
+    T = ":".join(map(lambda x: ("%s" % x), true_targets))
+    if ensure_dir(my_host, mount_point, opts) == -1: return -1
+    O = []
+    for o in opts.unionfs_opt + opts.fuse_opt:
+        O.append("-o %s" % o)
+    O = string.join(O, " ")
+    if opts.verbosity>=1:
+        Ws("%s : unionfs %s %s on %s\n" % (my_host.h, O, T, mount_point))
+    if opts.check_only:
+        return os.system("which unionfs > /dev/null")
+    else:
+        return os.system("unionfs %s %s %s" % (O, T, mount_point))
+
+def fusermount_u(my_host, fstype, export_dir, mount_point, opts):
+    if fstype not in [ "sshfs", "fuse" ]:
+        Es(("%s : warning : unfamiliar fstype %s, "
+            "go ahead and umount anyway\n" % (my_host.h, fstype)))
+    if opts.verbosity>=1:
+        Ws("%s : %s on %s\n" % (my_host.h, export_dir, mount_point))
+    if opts.check_only:
+        return os.system("which fusermount > /dev/null")
+    else:
+        if os.system("fusermount -u %s 2>&1 | egrep -e ." % mount_point) == 0:
+            Es("%s : could not unmount %s\n" % (my_host.h, mount_point))
+    
+# --------------------------------
+# graph handling for planning
+# --------------------------------
+
+def mod_prim(s, G, K):
+    """
+    run prim's algorithm for graph G.
+    s : start node.
+    K : a good number of children per node.
+    """
+    V,E = G
+    S = {}                      # determined
+    D = {}                      # value
+    P = {}                      # parent
+    C = { None : { s : None } } # children
+    # initialize
+    for u in V:
+        P[u] = None             # no parent yet
+        C[u] = {}               # no children yet
+        if u == s:
+            D[u] = 0
+        else:
+            D[u] = ""           # infty
+    # determine node one by one
+    while len(S) < len(V):
+        Du = [ (D[u], u) for u in V if u not in S and D[u] < "" ]
+        if len(Du) == 0: break
+        _,u = min(Du)
+        S[u] = None
+        assert E.has_key(u), (u, E)
+        for v,w in E[u].items():
+            if v in S: continue
+            p = P[v]
+            if w + max(0, len(C[u]) - K) - max(0, len(C[p]) - K) < D[v]:
+                D[v] = w
+                P[v] = u        # set parent of v
+                if p is not None: del C[p][v]
+                C[u][v] = None  # add v to u's children
+    V_S = []
+    for u in V:
+        if u not in S: V_S.append(u)
+    return P,C,V_S
+
+def instantiate_nodes(V, regexp):
+    """
+    V : list of Host objects
+    return the list of V matching regexp
+    """
+    U = []
+    for v in V:
+        if v.match_regexp(regexp):
+            U.append(v)
+    return U
+
+def instantiate_graph(V, edge_spec):
+    """
+    V : list of Host objects
+    edge_spec : list of ("kyoto", "kyoto", 1) type tuples
+    """
+    E = {}
+    for u in V: E[u] = {}
+    for A,B,w in edge_spec:
+        for s in instantiate_nodes(V, re.compile(A)):
+            for t in instantiate_nodes(V, re.compile(B)):
+                if w < E[s].get(t, ""):
+                    E[s][t] = w
+    return V,E
+
+def reverse_graph(G):
+    """
+    reverse all edge directions of G
+    """
+    V,E = G
+    E_ = {}
+    for u in V: E_[u] = {}
+    for s,neigh in E.items():
+        for t,w in neigh.items():
+            # s -> t : w
+            E_[t][s] = w
+    return V,E_
+
+def show_tree_rec(n, depth, C):
+    Ws("%s%s\n" % ((" " * depth), n))
+    for c in C[n]:
+        show_tree_rec(c, depth + 1, C)
+
+def show_tree(root, C):
+    show_tree_rec(root, 0, C)
+
+# --------------------------------
+# table
+# --------------------------------
+
+class mount_table:
+    def init(self, opts):
+        if opts.tab is None:
+            self.filename = None
+            for f in [ "mount_all_tab",
+                       os.path.expanduser("~/.mount_all_tab") ]:
+                if os.path.exists(f):
+                    self.filename = f
+                    break
+            if self.filename is None:
+                Es(("default tab file (mount_all_tab or ~/.mount_all_tab) "
+                    "does not exist\n"))
+                return None
+        elif os.path.exists(opts.tab):
+            self.filename = opts.tab
+        else:
+            Es("tab file (%s) does not exist\n" % opts.tab)
+            return None
+        assert self.filename is not None
+        self.fields = None
+        fp = open(self.filename)
+        for line in fp.readlines():
+            line = string.strip(line)
+            if "#" in line:
+                [ line, _ ] = string.split(line, "#", 1)
+            if line == "": continue
+            self.fields = string.split(line, None, 2)
+            # for now, only read one line
+            break
+        fp.close()
+        if self.fields is None:
+            Es("no entry in tab file (%s)\n" % self.filename)
+            return None
+        return self.fields
+            
+
+# --------------------------------
+# all mount one plan
+# --------------------------------
+
+# 
+# How all-mount-one works.
+# 
+# let's say A has the directory X that has the
+# contents to share (export_dir), and M the directory
+# everybody will see the content of X (mount_point).
+#
+# let's say B, C, D, ... are the direct children of A.
+# then,
+#
+# B mounts (by sshfs) A's M on its M.
+# C mounts (by sshfs) A's M on its M.
+# D mounts (by sshfs) A's M on its M.
+#  ...
+#
+# every node does exactly the same for its parent.
+# A (the root node) does the following special operation.
+#
+# A mounts (by unionfs) [ X ] on M.
+#
+
+class all_mount_one_plan:
+    def __init__(self, **kw):
+        self.root_host = None
+        self.parent = None
+        self.union_dir = None
+        self.mount_point = None
+        self.opts = None
+        for k,v in kw.items():
+            assert self.__dict__.has_key(k), (k, self.__dict__)
+            self.__dict__[k] = v
+
+    def __repr__(self):
+        kvs = map(lambda (k,v): "%s=%r" % (k,v), self.__dict__.items())
+        return "all_mount_one_plan(%s)" % ",".join(kvs)
+
+    def mk_plan(self, hosts, opts):
+        if len(opts.args) == 0:
+            args = mount_table().init(opts)
+            if args is None: return None
+        else:
+            args = opts.args[:]
+        if len(args) == 1:
+            # [ DIR ] -> [ X, DIR, DIR ]
+            args = [ None, args[0], args[0] ]
+        elif len(args) == 2:
+            # [ X, mount_point ] == [ X, mount_point, mount_point ]
+            args = [ None, args[0], args[1] ]
+        union_dir = args[1]
+        if ":" in union_dir:
+            [ root_host, union_dir ] = union_dir.split(":", 1)
+            if opts.root_host is None:
+                opts.root_host = root_host
+            else:
+                Es(("warning : ignoring host part (%s) of %s\n"
+                    % (root_host, args[1])))
+        self.union_dir = union_dir
+        self.mount_point = args[2]
+        root = opts.get_root(hosts)
+        if root is None: return None
+        edge_spec = read_edge_spec(opts)
+        if edge_spec is None: return None
+        G = instantiate_graph(hosts, edge_spec)
+        G = reverse_graph(G)
+        # P : parents, C : children, U : unreachable
+        P,C,U = mod_prim(root, G, opts.children)
+        if len(U) > 0:
+            Es("error: following nodes are unreachable\n")
+            for u in U: Es("%s\n" % u.h)
+        if opts.show_tree: show_tree(root, C)
+        self.root_host = root
+        self.parent = P
+        self.opts = opts
+        return self
+
+    def fix_identities(self, hosts):
+        # recover identity of objects
+        self.root_host = hosts[self.root_host.idx]
+        P = {}
+        for u,p in self.parent.items():
+            if p is None:
+                P[hosts[u.idx]] = None
+            else:
+                P[hosts[u.idx]] = hosts[p.idx]
+        self.parent = P
+
+    def exec_plan(self, wp, fp, hosts, rank):
+        h = hosts[rank]
+        if h is self.root_host:
+            if self.opts.server_uses_unionfs:
+                ret = unionfs_mount(h, [ (self.union_dir,1) ],
+                                    self.mount_point, self.opts)
+            else:
+                ret = sshfs_mount(h, h, self.union_dir, self.mount_point,
+                                  self.opts)
+            if ret != 0: return ret
+        r = sshfs_mount(h, self.parent[h],
+                        self.mount_point, self.mount_point, self.opts)
+        return r
+
+# --------------------------------
+# one mounts all plan
+# --------------------------------
+
+#
+# how one-mounts-all works
+#
+# say A is the `one' that mounts all others.
+# let's say X is the directory that has the contents
+# on each host (export_dir), and M the mount_point 
+# A finally sees all of them in (mount_point).
+#
+# A creates temporary directories T0, T1, T2, ...
+# A mounts (by sshfs) B's M on its T0 
+# A mounts (by sshfs) C's M on its T1
+# A mounts (by sshfs) D's M on its T2 
+#   ... 
+#   and finally,
+# A mounts (by unionfs) [ X, T0, T1, ... ] on its M
+#
+# All hosts execute the same operations 
+# on their direct children.
+#
+
+class one_mounts_all_plan:
+    def __init__(self, **kw):
+        self.root_host = None
+        self.children = None
+        self.tmp_dir = None
+        self.union_dir = None
+        self.export_dir = None
+        self.opts = None
+        for k,v in kw.items():
+            assert self.__dict__.has_key(k), (k, self.__dict__)
+            self.__dict__[k] = v
+
+    def __repr__(self):
+        kvs = map(lambda (k,v): "%s=%r" % (k,v), self.__dict__.items())
+        return "one_mounts_all_plan(%s)" % ",".join(kvs)
+
+    def mk_plan(self, hosts, opts):
+        """
+        executed on rank 0 process
+        """
+        if len(opts.args) == 0:
+            tab = mount_table()
+            args = tab.init(opts)
+            if args is None: return None
+            if len(args) < 2:
+                Es(("%s: entry (%s) must have at least two columns\n" %
+                    (tab.filename, string.join(args, " "))))
+                return None
+        else:
+            args = opts.args[:]
+            if len(args) < 2:
+                usage()
+                return None
+        assert len(args) >= 2, args
+        self.export_dir = args[0]
+        union_dir = args[1]
+        if ":" in union_dir:
+            [ root_host, union_dir ] = union_dir.split(":", 1)
+            if opts.root_host is None:
+                opts.root_host = root_host
+            else:
+                Es(("warning : ignoring host part (%s) of %s\n"
+                    % (root_host, args[1])))
+        self.union_dir = union_dir
+        root = opts.get_root(hosts)
+        if root is None: return None
+        edge_spec = read_edge_spec(opts)
+        if edge_spec is None: return None
+        G = instantiate_graph(hosts, edge_spec)
+        # P : parents, C : children, U : unreachable
+        P,C,U = mod_prim(root, G, opts.children)
+        if len(U) > 0:
+            Es("error: following nodes are unreachable\n")
+            for u in U: Es("%s\n" % u.h)
+        if opts.show_tree: show_tree(root, C)
+        self.root_host = root
+        self.children = C
+        self.tmp_dir = opts.tmp_dir
+        self.opts = opts
+        return self
+
+    def fix_identities(self, hosts):
+        # recover identity of objects
+        self.root_host = hosts[self.root_host.idx]
+        C = {}
+        for u,ch_ in self.children.items():
+            if u is None: continue
+            ch = {}
+            for c in ch_.keys():
+                ch[hosts[c.idx]] = None
+            C[hosts[u.idx]] = ch
+        self.children = C
+
+    def exec_plan(self, wp, fp, hosts, rank):
+        h = hosts[rank]
+        if ensure_dir(h, self.union_dir, self.opts) == -1: return 1
+        gxp_barrier(wp, fp, ("%s\n" % h.h), len(hosts))
+        T = []
+        for c in self.children[h].keys():
+            t = os.path.join(self.tmp_dir, ("%d" % len(T)))
+            T.append((t, 0))            # does not check dir
+            ret = sshfs_mount(h, c, self.union_dir, t, self.opts)
+            if ret != 0: return ret
+        T.insert(0, (self.export_dir, 1))
+        return unionfs_mount(h, T, self.union_dir, self.opts)
+
+
+# --------------------------------
+# all-mount-all
+# --------------------------------
+
+class all_mount_all_plan:
+    def __init__(self, **kw):
+        self.oma = None                 # one mounts all
+        self.amo = None                 # all mount one
+        self.opts = None
+        for k,v in kw.items():
+            assert self.__dict__.has_key(k), (k, self.__dict__)
+            self.__dict__[k] = v
+
+    def __repr__(self):
+        kvs = map(lambda (k,v): "%s=%r" % (k,v), self.__dict__.items())
+        return "all_mount_all_plan(%s)" % ",".join(kvs)
+
+    def mk_plan(self, hosts, opts):
+        if len(opts.args) == 0:
+            args = mount_table().init(opts)
+            if args is None: return None
+            if len(args) < 2:
+                Es(("%s: entry (%s) must have at least two columns\n" %
+                    (tab.filename, string.join(args, " "))))
+                return None
+        else:
+            args = opts.args[:]
+            if len(args) < 2:
+                # args = [ export_dir, mount_point ]
+                usage()
+                return None
+        assert len(args) >= 2, args
+        if len(args) == 2:
+            opts.args = [ args[0], opts.default_union_dir(), args[1] ]
+        else:
+            opts.args = args
+        oma = one_mounts_all_plan().mk_plan(hosts, opts)
+        if oma is None: return None
+        amo = all_mount_one_plan().mk_plan(hosts, opts)
+        if amo is None: return None
+        self.oma = oma
+        self.amo = amo
+        return self
+
+    def fix_identities(self, hosts):
+        self.oma.fix_identities(hosts)
+        self.amo.fix_identities(hosts)
+
+    def exec_plan(self, wp, fp, hosts, rank):
+        ret = self.oma.exec_plan(wp, fp, hosts, rank)
+        if ret != 0: return ret
+        return self.amo.exec_plan(wp, fp, hosts, rank)
+
+# --------------------------------
+# unmount plan
+# --------------------------------
+
+class umount_plan:
+    def __init__(self, **kw):
+        self.opts = None
+        for k,v in kw.items():
+            assert self.__dict__.has_key(k), (k, self.__dict__)
+            self.__dict__[k] = v
+    def __repr__(self):
+        kvs = map(lambda (k,v): "%s=%r" % (k,v), self.__dict__.items())
+        return "umount_plan(%s)" % ",".join(kvs)
+
+    def mk_plan(self, hosts, opts):
+        self.opts = opts
+        return self
+
+    def fix_identities(self, hosts):
+        pass
+
+    def exec_plan(self, wp, fp, hosts, rank):
+        # fuse /data/local/tau/union fuse rw,nosuid,nodev,user=tau 0 0
+        # sshfs#157.82.22.11:/data/local/tau/union /tmp/mount-all-tau/1
+        #                  fuse rw,nosuid,nodev,max_read=65536,user=tau 0 0
+        h = hosts[rank]
+        fp = open("/etc/mtab", "rb")
+        user = pwd.getpwuid(os.getuid())[0]
+        to_umount = []
+        for line in fp:
+            line = line.strip()
+            fields = line.split()
+            if len(fields) < 5: continue
+            [ fs_type, mount_point, vfstype, opts ] = fields[0:4]
+            if vfstype == "fuse":
+                m = re.search("user=([^,]*)", opts)
+                if m is None:
+                    if self.opts.verbosity >= 1:
+                        Es(("mount_all: %s: warning: a fuse entry in /etc/mtab "
+                            "does not have user field (%s)\n" % (h.h, line)))
+                else:
+                    x = m.group(1)
+                    if user == x:
+                        if fs_type.startswith("sshfs"):
+                            export_dir = fs_type
+                            fs_type = "sshfs"
+                        else:
+                            export_dir = "--"
+                        to_umount.append((fs_type, export_dir, mount_point))
+                    else:
+                        if self.opts.verbosity>=2:
+                            Es("mount by another user (%s)\n" % x)
+        fp.close()
+        for fstype,export_dir,mount_point in to_umount:
+            fusermount_u(h, fstype, export_dir, mount_point, self.opts)
+        return 0
+
+class show_plan(umount_plan):
+    def __repr__(self):
+        kvs = map(lambda (k,v): "%s=%r" % (k,v), self.__dict__.items())
+        return "show_plan(%s)" % ",".join(kvs)
+
+    def mk_plan(self, hosts, opts):
+        self.opts = opts
+        if opts.verbosity == 0:
+            opts.verbosity = 1
+        opts.check_only
+        opts.check_only = 1
+        return self
+
+# --------------------------------------------
+# parse command line args and make a plan
+# --------------------------------------------
+
+class mount_all_cmd_opts(opt.cmd_opts):
+    def __init__(self, **kw):
+        #             (type, default)
+        # types supported
+        #   s : string
+        #   i : int
+        #   f : float
+        #   l : list of strings
+        #   None : flag
+        opt.cmd_opts.__init__(self)
+        self.check_only = (None, 0)
+        self.config     = ("s", None)   # really, "edges"
+        self.children   = ("i", 5)
+        self.show_tree  = (None, 0)
+        # one->all, all->one, all->all, umount
+        self.action = ("s", "s")
+        self.root_host = ("s", None)
+        self.int_dir = ("s", None)
+        self.tmp_dir = ("s", None)
+        # self.union_dir = ("s", None)
+        self.server_uses_unionfs = (None, 0)
+        self.tab = ("s", None)
+        self.verbosity = ("i", 0)
+        self.sshfs_opt = ("s*", [])          # options passed to sshfs only
+        self.unionfs_opt = ("s*", [])        # options passed to unionfs only
+        self.fuse_opt = ("s*", [])           # options passed to both
+        self.help  = (None, 0)
+        self.h  = "help"
+        self.n = "check_only"
+        self.a = "action"
+        self.v = "verbosity"
+        self.c = "children"
+        for k,v in kw.items():
+            self.__dict__[k] = v
+
+    def __repr__(self):
+        kvs = map(lambda (k,v): "%s=%r" % (k,v), self.__dict__.items())
+        return "mount_all_cmd_opts(%s)" % ",".join(kvs)
+
+    def get_root(self, hosts):
+        if self.root_host is None: return hosts[0]
+        p = re.compile(self.root_host)
+        for h in hosts:
+            if p.match(h.h): return h
+        Es("no root host (%s) found\n" % root_host)
+        return None
+
+    def default_int_dir(self):
+        user = pwd.getpwuid(os.getuid())[0]
+        return ("/tmp/mount-all-%s/%s-%s" % (user, self.time, self.rnd))
+        
+    def default_tmp_dir(self):
+        int_dir = self.int_dir
+        return os.path.join(int_dir, "tmp")
+
+    def default_union_dir(self):
+        int_dir = self.int_dir
+        return os.path.join(int_dir, "union")
+
+    def set_defaults(self):
+        self.time = time.strftime("%Y-%m-%d-%H-%M-%S")
+        self.rnd = "%08d" % random.randint(0, 10**8-1)
+        if self.int_dir is None:
+            self.int_dir = self.default_int_dir()
+        if self.tmp_dir is None:
+            self.tmp_dir = self.default_tmp_dir()
+
+def usage():
+    Es(r"""usage:
+
+    (all-mount-one):
+
+      mw mount_all -a a1 [options] SHARE [MOUNT_POINT]
+
+    (one-mounts-all):
+
+      mw mount_all -a 1a [options] SHARE MOUNT_POINT
+
+    (all-mount-all):
+
+      mw mount_all -a aa [options] SHARE [UNION_DIR] MOUNT_POINT
+
+    (unmount):
+
+      mw mount_all -a u
+ 
+'mw mount_all -a a1 SHARE MOUNT_POINT' will mount
+directory SHARE of the root host (by default, the host whose GXP_EXEC_IDX
+is zero) on MOUNT_POINT of all hosts. MOUNT_POINT must be a local
+(not shared among them), empty directory and must exist on each
+host. After you succeed, all hosts can read/write the SHARE of
+the root host on MOUNT_POINT.  If --union_dir SHARE is
+omitted, it defaults to MOUNT_POINT. You must have sshfs installed in
+your PATH.  If MOUNT_POINT is omitted,
+it is as if MOUNT_POINT = SHARE.
+
+'mw mount_all -a 1a SHARE MOUNT_POINT' will mount
+directory SHARE of all hosts on MOUNT_POINT of the root host.
+MOUNT_POINT must be a local, empty directory and must exist on the root
+host. After you succeed, the root host can read/write the SHARE of
+all hosts on MOUNT_POINT.  You must have sshfs and unionfs installed in
+your PATH. 
+
+'mw mount_all -a aa SHARE UNION_DIR MOUNT_POINT' will mount
+directory SHARE of all hosts on MOUNT_POINT of all hosts.
+It is essentially executing the two commands in sequence.
+   mw mount_all -a 1a SHARE UNION_DIR
+   mw mount_all -a a1 UNION_DIR MOUNT_POINT
+UNION_DIR and MOUNT_POINT must be a local,
+empty directory and must exist on all
+hosts. After you succeed, all hosts can read/write the SHARE of
+all hosts on MOUNT_POINT.  You must have sshfs and unionfs installed in
+your PATH.  If you omit UNION_DIR, a unique temporary directory is
+created.
+
+'mw mount_all -a u' will unmount all fuse-mounted directories, no
+matter who have established them. It may fail on some nodes due to
+dependencies, so you must repeat this until it shows no line saying
+some directories get unmounted.
+
+options:
+
+  -n,--check_only : only shows who will do which mount operations, but
+             do not really perform them. It also performs checks to see if
+             the operations, if actually performed, will succeed.
+  --show_tree : shows the resulting tree more nicely.
+  --config FILE : specifies the configuration file describing which hosts
+             can ssh(fs) which hosts. If omitted, it seaches mount_all_edges
+             in the current directory and then ~/.mount_all_edges.  If none
+             is found, assume any host can sshfs any host.
+  --children N : specifies the desired number of children in the mount tree.
+             The default is 5.
+  --root_host HOST : if present, specifies the root host. For all-mount-one
+             operation (-a a1), it is the host that provides the export
+             directory. For one-mounts-all operation (-a 1a), it is the
+             host that mounts all other hosts.
+  --int_dir DIR : specifies the intermediate directory under which internal
+             mount points are created. By default, it is
+             /tmp/mount-all-USER/TIME-RANDOM, where USER, TIME, RANDOM are
+             replaced with the user name, the current time, and a
+             random number.
+  --tmp_dir DIR : specifies the temporary directory under which internal mount
+             points are created for one-mounts-all operation. The default is
+             "tmp" under the int_dir.
+  --verbosity LEVEL : specifies the verbosity level. The default is 0.
+             When set to 1, it shows which hosts perform which underlying
+             sshfs/unionfs mount operations.
+  --sshfs_opt key=val : passes whatever option to the underlying sshfs (only).
+  --unionfs_opt key=val : passes whatever option to the underlying unionfs (only).
+  --fuse_opt key=val : passes whatever option to both sshfs and unionfs.
+""")
+    return None
+
+def parse_opts():
+    """
+    parse cmdline options on rank 0 and return 
+    a mount_all_cmd_opts instance
+    """
+    opts = mount_all_cmd_opts()
+    if opts.parse(sys.argv[1:]) == -1: return None
+    if opts.help: return usage()
+    opts.set_defaults()
+    return opts
+
+def get_action(action):
+    if action == "a1":
+        return "all_mount_one"
+    elif action == "1a":
+        return "one_mounts_all"
+    elif action == "aa":
+        return "all_mount_all"
+    elif action == "u":
+        return "umount"
+    elif action == "s":
+        return "show"
+    else:
+        return None
+
+def do_mk_plan(hosts):
+    # run by rank 0 proc and make the plan
+    # (who should mount which dir of whom)
+    opts = parse_opts()
+    if opts is None: return None
+    action = get_action(opts.action)
+    if action is None: return usage()
+    assert action in [ "all_mount_one",
+                       "one_mounts_all",
+                       "all_mount_all",
+                       "umount", "show" ], action
+    g = globals()
+    clz = g.get("%s_plan" % action)
+    if clz is None: return usage()
+    return clz().mk_plan(hosts, opts)
+        
+def mk_plan(wp, fp, hosts, rank):
+    if rank == 0:
+        # rank 0 proc will make the plan
+        pl = do_mk_plan(hosts)
+        send_msg_to_all(wp, repr(pl))
+    # everybody reads the plan made by the rank 0
+    msg = recv_msg(fp)
+    if msg == "": return None
+    pl = eval(msg)
+    # Ws("pl=%r\n" % pl)
+    if pl is None: return None
+    pl.fix_identities(hosts)
+    return pl
+
+# ----------------------
+
+def set_close_on_exec():
+    import fcntl
+    try:
+        F_SETFD = fcntl.F_SETFD
+        FD_CLOEXEC = fcntl.FD_CLOEXEC
+    except AttributeError:
+        import FCNTL
+        F_SETFD = FCNTL.F_SETFD
+        FD_CLOEXEC = FCNTL.FD_CLOEXEC
+    fcntl.fcntl(3, F_SETFD, FD_CLOEXEC)
+    fcntl.fcntl(4, F_SETFD, FD_CLOEXEC)
+
+def main():
+    set_close_on_exec()
+    wp = os.fdopen(3, "wb")
+    fp = os.fdopen(4, "rb")
+    hosts = get_all_hosts(wp, fp)
+    if hosts is None: return 1
+    rank = get_rank()
+    pl = mk_plan(wp, fp, hosts, rank)
+    if pl is None: return 1
+    r = pl.exec_plan(wp, fp, hosts, rank)
+    return r
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+# ----------------------
+# TODOs
+# ----------------------
+
+# (1) examine "permission denied" errors after writing to a file (something to do with cache?)
+# (2) one-mounts-all function with unionfs + sshfs nearly complete
+# (3) one-mounts-all function with sshfs2
+# (4) test a simple all-mount-all function (one-mounts-all + all-mount-one)
+# (5) a more scalable all-mount-all function (a-few-mount-many + all-mount-the-few)
+# (6) investigate performance!
+#

@@ -1,0 +1,1005 @@
+#!/usr/bin/env python
+
+# Grid Mount File System 
+# Copyright (C) 2008  Nan Dun <dunnan@yl.is.s.u-tokyo.ac.jp>
+#
+# This program can be distributed under the terms of the GNU GPL.
+# See the file COPYING.
+
+GMOUNT_VERSION = 0.3
+GMOUNT_DATE = "2009.01.27"
+
+import errno
+import fcntl
+import optparse
+import os
+import pwd
+import random
+import re
+import socket
+import stat
+import string
+import sys
+import textwrap
+import time
+import ifconfig2
+
+from topology import TopParser
+
+# python version check
+PYTHON_VERSION_24 = '0x2040000'
+PYTHON_VERSION_25 = '0x2050000'
+PYTHON_VERSION_26 = '0x2060000'
+PYTHON_VERSION = hex(sys.hexversion)
+
+# colors
+COLOR_WARNING = COLOR_RED = 31
+COLOR_DEMO1 = COLOR_GREEN = 32
+COLOR_BROWN = 33
+COLOR_BLUE   = 34
+COLOR_DEMO2 = COLOR_MEGENTA = 35
+COLOR_EXEC = COLOR_CYAN = 36
+COLOR_WHITE = 37
+
+if sys.platform == "win32":
+    timer = time.clock
+else:
+    timer = time.time
+
+def ws(s):
+    sys.stdout.write(s)
+    sys.stdout.flush()
+
+def es(s):
+    sys.stderr.write(s)
+    sys.stderr.flush()
+
+def runcmd(cmd):
+    fp = os.popen(cmd)
+    output = fp.read()
+    ret = fp.close()
+    if ret is None:
+        return output.strip()
+    return None
+
+def string_hash(s):
+    hash = 0
+    for i in range(0, len(s)): 
+        hash = hash + ord(s[i]) * (i + 1)
+    return hash
+
+# basic GXP stuff
+def get_rank():
+    return int(os.environ.get("GXP_EXEC_IDX", "0"))
+
+def get_size():
+    return int(os.environ.get("GXP_NUM_EXECS", "1"))
+
+def get_site(hostname):
+    r = re.compile("[a-z]")
+    i = 0
+    site = ""
+    while r.match(hostname[i]) is not None:
+        site = site + hostname[i]
+        i = i + 1
+    return site
+
+class Host:
+    def __init__(self, h, f, i, idx):
+        self.h = h      # hostname
+        self.f = f      # fqdn
+        self.i = i      # ip address
+        self.idx = idx  # GXP_EXEC_IDX
+        self.site = get_site(h) # site which node belongs to
+        
+        # passing Host objects between sites needs
+        # object id to locate itself
+        self.id = string_hash(f) # use python indedpent hash
+    
+    # override hash in dict usage
+    def __hash__(self):
+        return self.id
+
+    def __cmp__(self, h):
+        assert isinstance(h, Host)
+        return cmp(self.id, h.id)
+    
+    def __eq__(self, h):
+        assert isinstance(h, Host)
+        return self.id == h.id
+
+    def __repr__(self):
+        return ("Host(%(h)r,%(f)r,%(i)r,%(idx)r)" % self.__dict__)
+
+    def match_regexp(self, regexp):
+        return regexp.match(self.f)
+
+def get_my_host():
+    h = socket.gethostname()
+    f = socket.getfqdn()
+    x,err = ifconfig2.compile_prio("g, p")
+    if err is None:
+        i = ifconfig2.get_my_addrs(x)[0]
+    else:
+        i = socket.gethostbyname(f)
+        es("%s* failed to get global ip address\n"
+			% h)
+    idx = get_rank()
+    return Host(h, f, i, idx)
+
+def get_all_hosts(wp, fp):
+    wp.write("%r\n" % get_my_host())
+    wp.flush()
+    hosts = []
+    for i in range(get_size()):
+        line = fp.readline()
+        assert line != ""
+        host = eval(line.strip())
+        hosts.append((host.idx, host))
+    hosts.sort()
+    hosts_list = map(lambda (idx,host): host, hosts)
+    return hosts_list
+
+def set_close_on_exec():
+    try:
+        fd_3 = fcntl.fcntl(3, fcntl.F_GETFD)
+        fd_4 = fcntl.fcntl(4, fcntl.F_GETFD)
+    except IOError:
+        fd_3 = fcntl.FD_CLOEXEC
+        fd_4 = fcntl.FD_CLOEXEC
+    fd_3 = fd_3 | fcntl.FD_CLOEXEC
+    fd_4 = fd_4 | fcntl.FD_CLOEXEC
+    fcntl.fcntl(3, fcntl.F_SETFD, fd_3)
+    fcntl.fcntl(4, fcntl.F_SETFD, fd_4)
+
+# auxiliary methods
+def remove_first_field(address):
+    """
+    remove the first field in ip/fqdn address
+    x.y.z --> y.z
+    """
+    if PYTHON_VERSION >= PYTHON_VERSION_25:
+        return address.partition('.')[-1]
+    else:
+        return ".".join(address.split('.')[1:])
+
+def remove_last_field(address):
+    """
+    remove the last field in ip/fqdn address
+    x.y.z --> x.y
+    """
+    if PYTHON_VERSION >= PYTHON_VERSION_25:
+        return address.rpartition('.')[0]
+    else:
+        return ".".join(address.split('.')[:-1])
+
+class Tree:
+    def __init__(self, nodes=[], n_subtrees=1, n_children=1, level=0, roots=[], **kw):
+        self.nodes = nodes
+        self.roots = roots
+        self.n_subtrees = n_subtrees
+        self.n_children = n_children
+        self.cmap = {}
+        self.pmap = {}
+        self.level = level
+        for k,v in kw.items():
+            assert self.__dict__.has_key(k), (k, self.__dict__)
+            self.__dict__[k] = v
+    
+    def __repr__(self):
+        kvs = map(lambda (k,v):"%s=%r" % (k,v), self.__dict__.items())
+        return "Tree(%s)" % ",".join(kvs)
+
+    def append(self, tree):
+        assert isinstance(tree, Tree)
+        for n in tree.nodes:
+            self.nodes.append(n)
+        for r in tree.roots:
+            self.roots.append(r)
+        self.n_children = tree.n_children
+        self.n_subtrees = tree.n_subtrees
+        self.cmap.update(tree.cmap)
+        self.pmap.update(tree.pmap)
+
+    def construct(self):
+        # check whether the number of nodes is enough
+        #if len(self.nodes) < self.n_subtrees + self.n_children:
+        if len(self.nodes) < self.n_children + 1:
+            # not enough nodes, make them all roots
+            self.roots = []
+            for n in self.nodes:
+                self.roots.append(n)
+            return
+        
+        # decide roots
+        candidates = self.roots
+        self.roots = []
+        if len(candidates): # user specified roots: hostname/fqdn/ip
+            for n in self.nodes:
+                if len(self.roots) < self.n_subtrees and \
+                   (n.h in candidates or n.f in candidates or \
+                   n.i in candidates):
+                    self.roots.append(n)
+        for n in self.nodes:
+            if len(self.roots) < self.n_subtrees and n not in self.roots:
+                self.roots.append(n)
+        
+        # construct tree
+        todolist = list(self.roots)
+        nodes = []
+        childlist = []
+        
+        for n in self.nodes:
+            if n not in self.roots:
+                nodes.append(n)
+
+        while len(nodes) > 0:
+            for t in todolist:
+                try:
+                    n = nodes.pop(0)
+                except IndexError:
+                    break
+                if not self.cmap.has_key(t):
+                    self.cmap[t] = [ n ]
+                elif len(self.cmap[t]) < self.n_children:
+                    self.cmap[t].append(n)
+                if len(self.cmap[t]) == self.n_children:
+                    todolist.remove(t)
+                childlist.append(n)
+                self.pmap[n] = t
+            if not len(todolist):
+                todolist = childlist
+                childlist = []
+        
+        # validity check
+        for n in self.nodes:
+            assert self.pmap.has_key(n) or self.cmap.has_key(n) or \
+            n in self.roots
+
+        for p, children in self.cmap.items():
+            for c in children:
+                assert self.pmap[c] == p
+        
+        return
+        
+    def has_roots_only(self):
+        if len(self.cmap):
+            assert len(self.pmap)
+            return False
+        else:
+            assert not len(self.pmap)
+            return True
+
+    def verbose_rec(self, node, depth, color=0):
+        ws("\033[%d;22m%s%s\n\033[0m" % (color, ("    " * depth), node.h))
+        if self.cmap.has_key(node):
+            for c in self.cmap[node]:
+                self.verbose_rec(c, depth + 1, color)
+    
+    def verbose(self, msg="", color=0):
+        ws("\033[%d;22m-- START: %s --\033[0m\n" % (color, msg))
+        for root in self.roots:
+            self.verbose_rec(root, 0, color)
+        ws("\033[%d;22m-- END: %s --\033[0m\n\n" % (color, msg))
+
+class GridMount:
+    def __init__(self, hosts, rank, wp, fp, opts=None, **kw):
+        # environmental variables, opts and **kw should not modify them
+        self.uid = os.getuid()
+        self.pid = os.getpid()
+        self.user = pwd.getpwuid(self.uid)[0]
+        self.hostname = socket.gethostname()
+        self.start = None
+        self.end = None
+        self.cmd = None
+		
+        # GXP runtime variables
+        self.hosts = hosts
+        self.rank = rank
+        self.host = hosts[rank]
+        self.size = get_size()
+        self.wp = wp
+        self.fp = fp
+
+		# configurable variables
+        self.action = 'aa'
+        self.exportdir = None
+        self.mountpoint = None
+        self.sshfsm_opts = []
+        self.fuse_opts =  []
+        self.grouping = 'ip'
+        self.fix_inter_dir = None
+        self.disable_lmount = False
+        self.force = False
+        self.verbosity = 0
+        self.verbose_color = False
+        self.dryrun = False
+        self.show_tree = False
+
+        # configurable tree variables
+        self.n_children = 4
+        self.n_subtrees = 2
+        self.root_hosts = []
+
+        # internal tree structure
+        self.treeset = None # store the forest at level k
+        self.interdir_prefix = "/tmp/gmnt-%s/inter" % self.user
+        self.plan = {}
+		
+        # initial from opts and **kw
+        if opts is not None:
+            for k, v in opts.__dict__.items():
+                if self.__dict__.has_key(k):
+                    self.__dict__[k] = v
+
+        for k, v in kw.items():
+            if self.__dict__.has_key(k):
+                self.__dict__[k] = v
+        
+        if self.exportdir is not None:
+            self.exportdir = os.path.normpath(self.exportdir)
+        if self.mountpoint is not None:
+            self.mountpoint = os.path.normpath(self.mountpoint)
+        self.vcnt = 0
+        self.start = (time.localtime(), timer())
+
+        # show verbose
+        if self.verbosity >= 4:
+            s = "init:\n" \
+                "     start: %s\n" \
+                "      user: %s\n" \
+                "      rank: %s\n" \
+                "    action: %s\n" \
+                " exportdir: %s\n" \
+                "mountpoint: %s\n" \
+            % (time.strftime("%a, %d %b %Y %H:%M:%S %Z", self.start[0]),
+               self.user, self.rank, self.action,
+               self.exportdir, self.mountpoint)
+            self.verbose(s)
+
+    def verbose(self, msg, color=0):
+        if self.verbose_color:
+            msg = "\033[%d;22m%s\033[0m" % (color, msg)
+        ws("[%9s#%5d:%05d] %s\n" % \
+           (self.hostname, self.pid, self.vcnt, msg))
+        self.vcnt += 1
+
+    def ensure_dir(self, path):
+        if os.path.isdir(path):
+            return 0
+        
+        if self.verbosity >= 1:
+            if self.dryrun:
+                self.verbose("ensure_dir: %s does not exist and will not be"
+                " created in dryrun" % path)
+                return 1
+            else:
+                self.verbose("ensure_dir: os.makedirs(%s)" % path)
+        
+        if not self.dryrun:
+            try:
+                os.makedirs(path)
+            except OSError, err:
+                if err.errno != errno.EEXIST: #TODO: check if it is a file
+                    es("%s: failed to create %s: %s\n" % \
+                       (self.hostname, path, os.strerror(err.errno)))
+                    return 1
+        return 0
+	
+    def barrier(self):
+        self.wp.write('\n')
+        self.wp.flush()
+        for i in range(self.size):
+            r = self.fp.readline()
+            if r == "":
+                return 1
+        return 0
+		
+    def broadcast(self, msg):
+        self.wp.write(msg)
+        self.wp.write("\n") # Why?
+        self.wp.flush()
+    
+    def receive(self):
+        msg = self.fp.readline()
+        assert msg != ""
+        return msg.strip()
+    
+    def grouping_hosts(self):
+        groups = {}
+        for h in self.hosts:
+            if self.grouping == 'ip':
+                key = remove_last_field(h.i)
+            elif self.grouping == 'domain':
+                key = remove_first_field(h.f)
+            elif self.grouping == 'hostname':
+                key = h.h.strip("0123456789")
+            if groups.has_key(key):
+                groups[key].append(h)
+            else:
+                groups[key] = [ h ]
+
+        for k, v in groups.items():
+            v.sort(lambda x, y: cmp(x.h, y.h))
+
+        if self.verbosity >= 1:
+            vs = "grouping_host: grouping by %s\n" % self.grouping
+            for k, v in groups.items():
+                if self.grouping == 'ip':
+                    glst = map(lambda h:"%s (%s, %s)\n" % (h.i, h.h, h.f), v)
+                    vs += "GROUP %s.*\n" % k + "".join(glst)
+                elif self.grouping == 'domain':
+                    glst = map(lambda h:"%s (%s, %s)\n" % (h.f, h.h, h.i), v)
+                    vs += "GROUP *.%s\n" % k + "".join(glst)
+                elif self.grouping == 'hostname':
+                    glst = map(lambda h:"%s (%s, %s)\n" % (h.h, h.f, h.i), v)
+                    vs += "GROUP %s???\n" % k + "".join(glst)
+                    
+            self.verbose(vs, COLOR_DEMO1)
+        
+        return groups
+    
+    def make_tree(self):
+        # generate identical interdir_prefix
+        if self.fix_inter_dir is None:
+            interdir_prefix = "/tmp/gmnt-%s/inter-%s-%08d" % (self.user, 
+                time.strftime("%Y-%m-%d-%H-%M-%S"), random.randint(0, 10**8-1))
+        else:
+            interdir_prefix = "/tmp/gmnt-%s/inter-%s" % (self.user, 
+                self.fix_inter_dir)
+
+        # make trees
+        treeset = []
+        # level-0
+        tree = Tree()
+        groups = self.grouping_hosts()
+        for k, group in groups.items():
+            t = Tree(group, self.n_subtrees, self.n_children, 0, 
+                     self.root_hosts)
+            t.construct()
+            tree.append(t)
+        treeset.append(tree)
+
+        # level-1
+        nodes = list(tree.roots)
+        tree = Tree(nodes, 1, self.n_children, 1, [])
+        tree.construct()
+        treeset.append(tree)
+
+        if self.verbosity >= 1 and self.show_tree:
+            if self.verbose_color:
+                color = COLOR_DEMO2
+            else:
+                color = 0
+            self.verbose("make_tree: show tree structure", color)
+            for t in treeset:
+                t.verbose("tree at level %s" % t.level, color)
+        
+        return interdir_prefix, treeset
+            
+    def prepare_action(self):
+        if self.action == 'u':
+            return
+        if self.rank == 0:
+            if self.verbosity >= 3:
+                self.verbose("prepare_action: broadcast tree to all hosts")
+            self.broadcast(repr(self.make_tree()))
+        if self.verbosity >= 4:
+            self.verbose("prepare_action: receive tree")
+        self.interdir_prefix, self.treeset = eval(self.receive())
+        self.barrier()
+
+    def perform_action(self):
+        if self.action == 'u':
+            return self.action_umount()
+        elif self.action == 'aa':
+            return self.action_all_mount_all()
+        
+        return 0
+    
+    # actions
+    def action_umount(self, new=True):
+		# new: ama /data/local/dun/mnt fuse.gmount rw,nosuid,nodev,max_read=65536,user=dun 0 0
+        # old: gmount#aa /mountpoint fuse rw,nosuid,nodev,max_read=65536,user=foo
+        fp = open("/etc/mtab", "rb")
+        entry_to_umount = []
+        for line in fp:
+            line = line.strip()
+            if not line.startswith("gmount") and not line.startswith("ama"):
+                continue
+            fields = line.split()
+            [ fs, mountpoint, vfstype, fsopts ] = fields[0:4]
+            if new:
+                fstype, fsname = vfstype.split('.')
+            else:
+                fsname, fstype = fs.split("#")
+            if fsname == "gmount" and fstype == "fuse":
+                me = re.search("user=([^,]*)", fsopts)
+                if me is None:
+                    es(("%s: warning: a fuse entry in /etc/mtab "
+                    "does not have user field (%s)\n" % (self.hostname, line)))
+                else:
+                    u = me.group(1)
+                    if self.user == u:
+                        entry_to_umount.append(mountpoint)
+                    elif self.verbosity >= 2:
+                        es("%s: warning: %s mount by another user %s\n" % \
+                           (self.hostname, mountpoint, u))
+            else:
+                es("%s: error: unfamiliar filesystem %s with vfstype %s\n"
+                   % (self.hostname, fsname, vfstype))
+                return 1
+
+        fp.close()
+        
+        # check if umount is safe
+        busy = False
+        for dir in entry_to_umount:
+            busy = busy or self.fuser_check(dir)
+        # check other nodes
+        self.broadcast("%s" % busy)
+        for i in range(self.size):
+            busy = busy or eval(self.receive())
+        
+        if busy and not self.force:
+            return 1
+            
+        for dir in entry_to_umount:
+            if self.fusermount_u(dir) == 0:
+                # cleanup intermediate directory
+                if dir.startswith(self.interdir_prefix):
+                    if self.verbosity >= 3:
+                        self.verbose("fusermount_u: os.rmdir(%s)" % dir)
+                    os.rmdir(dir)
+        return 0
+    
+    def action_all_mount_all(self):
+        self.make_plan_all_mount_all()
+        
+        r = 0
+        for targets, mountpoint in self.plan['ama']:
+            r = max(r, self.ensure_dir(mountpoint))
+        self.barrier()
+        if r == 1 and not self.dryrun:
+            return 1
+            
+        for targets, mountpoint in self.plan['ama']:
+            r = self.sshfsm_mount(targets, mountpoint, 'ama')
+            if r!= 0:
+                return 1
+        return 0
+    
+    def make_plan_all_to_all_mount(self):
+        me = self.host
+        targets = []
+        for n in tree.nodes:
+            if n != me:
+                targets.append((n, exportdir))
+        targets.append((me, exportdir))
+        self.plan['a2a'] = ((targets, mountpoint))
+    
+    def make_plan_all_mount_all(self):
+        # generalized hierarchical construction
+        me = self.host
+        exportdir = self.exportdir
+        mountpoint = self.mountpoint
+        exportdir_lower = None
+        tree_lower = None
+        self.plan['ama'] = []
+        for i in range(0, len(self.treeset)):
+            tree = self.treeset[i]
+            interdir = "%s-export-L%d" % (self.interdir_prefix, i)
+            
+            # operation fo all-to-all mount if roots only
+            if tree.has_roots_only():
+                if me in tree.roots:
+                    targets = []
+                    for r in tree.roots:
+                        if r != me:
+                            if tree_lower and not tree_lower.cmap.has_key(r):
+                                targets.append((r, exportdir_lower))
+                            else:
+                                targets.append((r, exportdir))
+                    if tree_lower and not tree_lower.cmap.has_key(me):
+                        targets.append((me, exportdir_lower))
+                    else:
+                        targets.append((me, exportdir))
+                    self.plan['ama'].append((targets, mountpoint))
+                return
+            
+            # operation for one-mounts-all phase
+            if tree.cmap.has_key(me):
+                targets = []
+                for c in tree.cmap[me]:
+                    if tree.cmap.has_key(c):    # has children
+                        targets.append((c, interdir))
+                    else:
+                        if tree_lower and not tree_lower.cmap.has_key(c):
+                            targets.append((c, exportdir_lower))
+                        else:
+                            targets.append((c, exportdir))
+                if tree_lower and not tree_lower.cmap.has_key(me):
+                    targets.append((me, exportdir_lower))
+                else:
+                    targets.append((me, exportdir))
+                self.plan['ama'].append((targets, interdir))
+            
+            # operation for all-mount-one phase
+            if tree.pmap.has_key(me):
+                targets = []
+                parent = tree.pmap[me]
+                targets.append((parent, mountpoint))
+                if tree.cmap.has_key(me):   # has children
+                    targets.append((me, interdir))
+                if tree_lower and not tree_lower.cmap.has_key(me):
+                    targets.append((me, exportdir_lower))
+                else:
+                    targets.append((me, exportdir))
+                self.plan['ama'].append((targets, mountpoint))
+            
+            tree_lower = tree
+            exportdir_lower = exportdir
+            exportdir = interdir
+       
+        # finally, mount the toppest root, if reaches here
+        tree = self.treeset[-1]
+        if me in tree.roots:
+            self.plan['ama'].append(([(me, interdir)], mountpoint))
+
+    def make_plan_one_mounts_all(self, tree, exportdir, mountpoint, interdir):
+        me = self.host
+        if me not in tree.nodes:
+            return
+        
+        targets = []
+        if me not in tree.cmap.keys(): # no child, do nothing
+            self.plan['oma'] = ([], interdir)
+            return
+        
+        for c in tree.cmap[me]:
+            if c in tree.cmap.keys():  # child is not leaf
+                targets.append((c, interdir))
+            else:
+                targets.append((c, exportdir))
+        targets.append((me, exportdir))
+        self.plan['oma'] = (targets, interdir)
+
+    def make_plan_all_mount_one(self, tree, exportdir, mountpoint, interdir):
+        me = self.host
+        if me not in tree.nodes:
+            return
+
+        targets = []
+        if tree.pmap.has_key(me):
+            targets.append((tree.pmap[me], mountpoint))
+        if tree.cmap.has_key(me):
+            targets.append((me, interdir))
+        targets.append((me, exportdir))
+        self.plan['amo'] = (targets, mountpoint)
+        
+    # operation primitivies
+    def sshfsm_mount(self, targets, mountpoint, fsname):
+        assert targets is not None and len(targets)
+
+       	# for new sshfsmux higher rank host comes first
+		# temporarily solution
+        targets.reverse()
+        f_host, f_export = targets[0]
+        if f_export != self.exportdir:
+            targets.insert(0, (self.host, self.exportdir))
+
+        # make sure the mountpoint does exist and is empty
+        #if self.ensure_dir(mountpoint) == 1 and not self.dryrun:
+        #    return 1
+        if not self.dryrun and len(os.listdir(mountpoint)):
+            es("%s: error: mount point %s is not empty\n" % \
+               (self.hostname, mountpoint))
+            return 1
+       
+        if self.disable_lmount:
+            tstr = " ".join(map(lambda (h,d):"%s:%s" % (h.i, d), targets))
+            vstr = " ".join(map(lambda (h,d):"%s:%s" % (h.h, d), targets))
+        else:
+            tstr = ""
+            vstr = ""
+            for h, d in targets:
+                if h == self.host:
+                    tstr += " %s:%s=l" % (h.i, d)
+                    vstr += " %s:%s=l" % (h.h, d)
+                else:
+                    tstr += " %s:%s" % (h.i, d)
+                    vstr += " %s:%s" % (h.h, d)
+                
+        opts = []
+        for o in self.sshfsm_opts:
+            opts.append(o)
+        for o in self.fuse_opts:
+            opts.append(o)
+        opts.append("subtype=gmount")
+        opts.append("fsname=%s" % fsname)
+        opts.append("StrictHostKeyChecking=no")
+        ostr = " ".join(map(lambda o:"-o %s" % o, opts))
+        
+        if self.verbosity >= 4:
+            self.verbose("sshfsm_mount: os.system(sshfsm %s %s %s)" % \
+                         (tstr, mountpoint, ostr), COLOR_EXEC)
+        elif self.verbosity >= 3:
+            self.verbose("sshfsm_mount: os.system(sshfsm %s %s ...)" % \
+                         (vstr, mountpoint), COLOR_EXEC)
+        
+        if self.dryrun:
+            r = os.system("which sshfsm > /dev/null")
+        else:
+            r = os.system(("sshfsm %s %s %s" % (tstr, mountpoint, ostr)))
+        
+        if r != 0:
+            if self.verbosity >= 3:
+                self.verbose("sshfsm_mount: failed, os.system(sshfsm %s %s ...)" % \
+                             (vstr, mountpoint), COLOR_WARNING)
+            es("%s: error: sshfsm mount failed\n" % self.hostname)
+        return r
+    
+    def fuser_check(self, mountpoint):
+        if self.verbosity >= 2:
+            self.verbose("fuser_check: check if %s is in use" % mountpoint)
+        line = runcmd("fuser -m %s 2>&1" % mountpoint)
+        if line is not None:
+            procs = line.split()
+            procs.pop(0)   # remove mountpoint
+            for p in procs:
+                # fuser indicator:
+                # c: current directory
+                # e: running executable
+                # f: open file
+                # r: the root directory
+                # m: shared library
+                pnum = p.strip('cefrm')
+                try:
+                    fp = open("/proc/%s/cmdline" % pnum, "r")
+                except IOError:
+                    continue;
+                cmdline = fp.readline()
+                fp.close()
+                cmdline = cmdline.replace('\0', ' ')
+                es("%s: warning: %s is occupied by proc %s: %s\n" %
+                    (self.hostname, mountpoint, pnum, cmdline))
+            es("%s: please make sure umount is safe, or use "
+               "\"--force\" option\n" % self.hostname)
+            return True
+        return False
+
+
+    def fusermount_u(self, mountpoint):
+        if self.verbosity >= 2:
+            self.verbose("fusermount_u: os.system(fusermount -u %s 2>&1)" % \
+                        mountpoint)
+        if self.dryrun:
+            return os.system("which fusermount > /dev/null")
+        else:
+            if os.system("fusermount -u %s 2>&1 | egrep -e ." % mountpoint) == 0:
+                es("%s: error: could not unmount %s\n" % (self.hostname, mountpoint))
+                return 1
+            else:
+                return 0
+
+# OptionParser help string workaround
+# adapted from Tim Chase's code from following thread
+# http://groups.google.com/group/comp.lang.python/msg/09f28e26af0699b1
+class OptionParserHelpFormatter(optparse.IndentedHelpFormatter):
+    def format_description(self, desc):
+        if not desc: return ""
+        desc_width = self.width - self.current_indent
+        indent = " " * self.current_indent
+        bits = desc.split('\n')
+        formatted_bits = [
+            textwrap.fill(bit, desc_width, initial_indent=indent,
+                susequent_indent=indent)
+            for bit in bits]
+        result = "\n".join(formatted_bits) + "\n"
+        return result
+
+    def format_option(self, opt):
+        result = []
+        opts = self.option_strings[opt]
+        opt_width = self.help_position - self.current_indent - 2
+        if len(opts) > opt_width:
+            opts = "%*s%s\n" % (self.current_indent, "", opts)
+            indent_first = self.help_position
+        else:
+            opts = "%*s%-*s  " % (self.current_indent, "", opt_width, opts)
+            indent_first = 0
+        result.append(opts)
+        if opt.help:
+            help_text = self.expand_default(opt)
+            help_lines = []
+            for para in help_text.split("\n"):
+                help_lines.extend(textwrap.wrap(para, self.help_width))
+            result.append("%*s%s\n" % (indent_first, "", help_lines[0]))
+            result.extend(["%*s%s\n" % (self.help_position, "", line)
+                for line in help_lines[1:]])
+        elif opts[-1] != "\n":
+            result.append("\n")
+        return "".join(result)
+
+def parse_argv(argv):
+    usage = "usage: gxpc mw %prog [options] export_dir mount_point"
+    
+    # Default values
+
+    parser = optparse.OptionParser(usage=usage,
+                formatter=OptionParserHelpFormatter())
+    
+    parser.remove_option("-h")
+    parser.add_option("-h", "--help", action="store_true",
+                      dest="help", default=False,
+                      help="show the help message and exit")
+    
+    parser.add_option("-a", "--action", action="store", type="string",
+                      #dest="action", metavar="aa/a1/1a/u",
+                      dest="action", metavar="aa/a1/1a/u",
+                      default="aa", help="action (default: aa)")
+    
+    parser.add_option("-v", "--verbosity", action="store", type="int",
+                      dest="verbosity", metavar="0/1/2/3/4", default=0,
+                      help="verbosity level (default: 0)")
+    
+    parser.add_option("-d", "--dryrun", action="store_true",
+                      dest="dryrun", default=False,
+                      help="dryrun, do not execute (default: off)")
+    
+    parser.add_option("-g", "--grouping", action="store", type="string",
+                      dest="grouping", metavar="ip/domain/hostname",
+                      default='ip', help="grouping metric (default: ip)")
+    
+    parser.add_option("-c", "--children", action="store", type="int",
+                      dest="n_children", metavar="NUM",
+                      default=4, help="max number of children (default: 4)")
+    
+    parser.add_option("-t", "--subtrees", action="store", type="int",
+                      dest="n_subtrees", metavar="NUM",
+                      default=2, help="min number of subtrees for each"
+                      " group (default: 2)")
+    
+    parser.add_option("--root_host", action="append", type="string",
+                      dest="root_hosts", metavar="HOSTNAME/FQDN/IP",
+                      default=[], help="root host for tree")
+    
+    parser.add_option("--sshfsm_opts", action="append", type="string",
+                      dest="sshfsm_opts", metavar="OPT=VAL",
+                      default=[], help="sshfs-mux options (default: None)")
+    
+    parser.add_option("--fuse_opts", action="append", type="string",
+                      dest="fuse_opts", metavar="OPT=VAL",
+                      default=[], help="fuse options (default: None)")
+    
+    parser.add_option("--disable_lmount", action="store_true",
+                      dest="disable_lmount", default=False, 
+                      help="disable local mount in sshfs-mux")
+    
+    parser.add_option("--disable_cache", action="store", type="string",
+                      dest="disable_cache", metavar="fuse/sshfsm/all",
+                      default='no', help="disable cache (default: off)")
+    
+    parser.add_option("--hpc", action="store_true",
+                      dest="enable_hpc", default=False,
+                      help="enable options for hpc")
+    
+    parser.add_option("--force", action="store_true",
+                      dest="force", default=False, 
+                      help="force to perform action")
+    
+    parser.add_option("--fix_inter_dir", action="store", type="string",
+                      dest="fix_inter_dir", metavar="STRING",
+                      default=None, help="fixed part in intermediate directory")
+     
+    parser.add_option("--show_tree", action="store_true",
+                      dest="show_tree", default=False,
+                      help="show mount tree when verbosity > 0")
+    
+    #parser.add_option("--topology", action="store",
+    #                  dest="topology", metavar="FULLPATH", default=None,
+    #                  help="specify topology file (default: None)")
+
+    parser.add_option("--verbose_color", action="store_true",
+                      dest="verbose_color", default=False,
+                      help="enable color verbose messages (default: off)")
+    
+    (opts, args) = parser.parse_args(argv)
+    
+    opts.print_help = parser.print_help
+
+    if opts.help:
+         return opts, None
+    
+    # check the validity of option
+    #if opts.action is None or opts.action not in [ "aa", "a1", "1a", "u" ]:
+    if opts.action is None or opts.action not in [ "aa", "u" ]:
+        errstr = "error: invalid action %s for gmount" % opts.action
+        return None, errstr
+	
+    if opts.action != "u":
+        if len(args) != 2:
+            errstr = "error: invalid arguments: " + " ".join(args) + \
+                ", see help for usage\n" 
+            return None, errstr
+        else:
+            opts.exportdir, opts.mountpoint = args
+    
+    if opts.n_subtrees <= 0:
+        errstr = "error: invalid number of subtrees %d\n" % opts.n_subtrees
+        return None, errstr
+    
+    if opts.n_children <= 0:
+        errstr = "error: invalid number of children %d\n" % opts.n_children
+        return None, errstr
+
+    if opts.disable_cache != "no":
+        if opts.disable_cache in [ "yes", "all", "sshfsm" ]:
+            opts.sshfsm_opts.append("cache=no") 
+        if opts.disable_cache in [ "yes", "all", "fuse" ]:
+            opts.fuse_opts.append("entry_timeout=0")
+            opts.fuse_opts.append("attr_timeout=0")
+            opts.fuse_opts.append("ac_attr_timeout=0")
+
+    opts.sshfsm_opts.append("no_check_root")
+    if opts.enable_hpc:
+        opts.sshfsm_opts.append("directport=5285")
+#        opts.sshfsm_opts.append("no_auth")
+        opts.sshfsm_opts.append("forward=%s" % opts.exportdir)
+        opts.fuse_opts.append("kernel_cache")
+        opts.fuse_opts.append("big_writes")
+
+    if opts.fuse_opts is not None:
+        keywords = []
+        for o in opts.fuse_opts:
+            keywords = keywords + o.split("=")
+        errstr = ''
+        if "fsname" in keywords:
+            errstr = "error: fuse option \"--fsname\" preserved by gmount\n"
+        if "subtype" in keywords:
+            errstr += "error: fuse option \"--subtype\" preserved by gmount\n"
+        if errstr:
+            return None, errstr
+    
+    opts.cmd = " ".join(sys.argv)
+
+    # TODO: check topology file
+    # if opts.topology is not None:
+    #   opts.topology = os.path.realpath(opts.topology)
+
+    return opts, None
+
+def main():
+    # initial GXP-related environments
+    try:
+   	    set_close_on_exec()
+    except IOError:
+        sys.stderr.write("usage: gxpc mw gmnt\n")
+        return 1
+    wp = os.fdopen(3, "wb")
+    fp = os.fdopen(4, "rb")
+    hosts = get_all_hosts(wp, fp)
+    if hosts is None:
+        sys.stderr.write("error: failed to get all hosts\n")
+        return 1
+    rank = get_rank()
+    myhost = hosts[rank]
+    
+    # parsing arguments
+    opts, errstr = parse_argv(sys.argv[1:])
+    if opts is None:
+        if rank == 0:
+            ws(errstr)
+        return 1
+    if opts.help:
+        if rank == 0:
+            opts.print_help()
+        return 0
+
+    # execution
+    gmnt = GridMount(hosts, rank, wp, fp, opts)
+    gmnt.prepare_action()
+    return gmnt.perform_action()
+    
+if __name__ == "__main__":
+    sys.exit(main())

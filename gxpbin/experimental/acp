@@ -1,0 +1,56 @@
+#!/usr/bin/env python
+import os,random,sys,string
+
+def Ws(s):
+    sys.stdout.write(s)
+
+def Es(s):
+    sys.stderr.write(s)
+
+def translate_cwd():
+    cwd = os.path.normpath(os.getcwd())
+    for var,trans in [ ("HOME", "~") ]:
+        prefix = os.environ.get(var)
+        if prefix is None: continue
+        prefix = os.path.normpath(prefix)
+        n = len(prefix)
+        if cwd == prefix:
+            cwd = trans
+            continue
+        elif len(cwd) > n and cwd[:n] == prefix and cwd[n] == os.path.sep:
+            cwd = trans + cwd[n:]
+            continue
+    return cwd
+
+def main():
+    if len(sys.argv) < 3:
+        Es(r"""usage:
+  %s src dst
+""" % sys.argv[0])
+        sys.exit(2)
+    src = sys.argv[1]
+    dst = sys.argv[2]
+    if os.path.exists(dst):
+        Es("%s exists locally\n" % dst)
+        sys.exit(0)
+
+    fp = os.popen("gxpc e test -f %s '&&' echo '${GXP_GUPID}'" % src)
+    hosts = fp.readlines()
+    status = fp.close()
+    if len(hosts) == 0:
+        Es("no host has file %s\n" % src)
+        sys.exit(1)
+    host = string.strip(random.choice(hosts))
+    Es("copying %s:%s to %s\n" % (host, src, dst))
+    status = os.system("gxpc e -h %s cat %s > %s" % (host, src, dst))
+    if os.WIFEXITED(status):
+        e = os.WEXITSTATUS(status)
+        if e: os.remove(dst)
+        return e
+    else:
+        return 1
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+

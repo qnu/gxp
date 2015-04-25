@@ -1,0 +1,693 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CLUSTER>
+  <SWITCH bandwidth="-2">
+    <SWITCH bandwidth="1000"> <!--CHIBA -->
+      <SWITCH bandwidth="1000"> <!--CHIBA000 chiba??? -->
+	<SWITCH bandwidth="1000">
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba-charlie</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba000</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba001</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba002</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba003</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba004</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba005</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba006</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba007</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba008</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba009</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba010</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba011</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba012</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba013</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba014</HOSTNAME>
+	  </NODE>
+	</SWITCH>
+	<SWITCH bandwidth="500">
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba015</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba016</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba017</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba018</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba019</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba020</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba021</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba022</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba023</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba024</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba025</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba026</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba027</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba028</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba029</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba030</HOSTNAME>
+	  </NODE>
+	</SWITCH>
+	<SWITCH bandwidth="1000">
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba031</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba032</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba033</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba034</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba035</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba036</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba037</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba038</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba039</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba040</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba041</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba042</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba043</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba044</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba045</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba046</HOSTNAME>
+	  </NODE>
+	</SWITCH>   
+	<SWITCH bandwidth="1000">
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba047</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba048</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba049</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba050</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba051</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba052</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba053</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba054</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba055</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba056</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba057</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba058</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba059</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba060</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba061</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba062</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba063</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba064</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba065</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba066</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba067</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>chiba068</HOSTNAME>
+	  </NODE>
+	</SWITCH>
+      </SWITCH>
+
+      <!--CHIBA100  chiba??? -->
+      <SWITCH bandwidth="1000">
+	<NODE bandwidth="900">
+	  <HOSTNAME>chiba100</HOSTNAME>
+	</NODE>
+	<NODE bandwidth="900">
+	  <HOSTNAME>chiba101</HOSTNAME>
+	</NODE>
+	<NODE bandwidth="900">
+	  <HOSTNAME>chiba102</HOSTNAME>
+	</NODE>
+	<NODE bandwidth="900">
+	  <HOSTNAME>chiba103</HOSTNAME>
+	</NODE>
+	<NODE bandwidth="900">
+	  <HOSTNAME>chiba104</HOSTNAME>
+	</NODE>
+	<NODE bandwidth="900">
+	  <HOSTNAME>chiba105</HOSTNAME>
+	</NODE>
+	<NODE bandwidth="900">
+	  <HOSTNAME>chiba106</HOSTNAME>
+	</NODE>
+	<NODE bandwidth="900">
+	  <HOSTNAME>chiba107</HOSTNAME>
+	</NODE>
+	<NODE bandwidth="900">
+	  <HOSTNAME>chiba108</HOSTNAME>
+	</NODE>
+      </SWITCH> <!-- END OF CHIBA100 -->
+    </SWITCH> <!-- END OF CHIBA -->
+    
+    
+    <SWITCH bandwidth="1000">   <!-- HONGO -->
+      <SWITCH bandwidth="1000"> <!-- HONGO000 hongo???. -->
+	<SWITCH bandwidth="1000">
+	  <NODE bandwidth="500">
+	    <HOSTNAME>hongo-charlie</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>hongo000</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>hongo001</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>hongo002</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>hongo003</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>hongo004</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>hongo005</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>hongo006</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>hongo007</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>hongo008</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>hongo009</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>hongo010</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>hongo011</HOSTNAME>
+	  </NODE>
+	  <NODE bandwidth="500">
+	    <HOSTNAME>hongo012</HOSTNAME>
+	  </NODE>
+	  <SWITCH bandwidth="900">
+	    <NODE bandwidth="500">
+	      <HOSTNAME>hongo013</HOSTNAME>
+	    </NODE>
+	    <NODE bandwidth="500">
+	      <HOSTNAME>hongo014</HOSTNAME>
+	    </NODE>
+	    <NODE bandwidth="500">
+	      <HOSTNAME>hongo015</HOSTNAME>
+	    </NODE>
+	    <NODE bandwidth="500">
+	      <HOSTNAME>hongo016</HOSTNAME>
+	    </NODE>
+	    <NODE bandwidth="500">
+	      <HOSTNAME>hongo017</HOSTNAME>
+	    </NODE>
+	    <NODE bandwidth="500">
+	      <HOSTNAME>hongo018</HOSTNAME>
+	    </NODE>
+	    <NODE bandwidth="500">
+	      <HOSTNAME>hongo019</HOSTNAME>
+	    </NODE>
+	    <NODE bandwidth="500">
+	      <HOSTNAME>hongo020</HOSTNAME>
+	    </NODE>
+	    <NODE bandwidth="500">
+	      <HOSTNAME>hongo021</HOSTNAME>
+	    </NODE>
+	    <NODE bandwidth="500">
+	      <HOSTNAME>hongo022</HOSTNAME>
+	    </NODE>
+	    <NODE bandwidth="500">
+	      <HOSTNAME>hongo023</HOSTNAME>
+	    </NODE>
+	    <NODE bandwidth="500">
+	      <HOSTNAME>hongo024</HOSTNAME>
+	    </NODE>
+	    <NODE bandwidth="500">
+	      <HOSTNAME>hongo025</HOSTNAME>
+	    </NODE>
+	    <NODE bandwidth="500">
+	      <HOSTNAME>hongo026</HOSTNAME>
+	    </NODE>
+	    <SWITCH bandwidth="900">
+	      <NODE bandwidth="500">
+		<HOSTNAME>hongo027</HOSTNAME>
+	      </NODE>
+	      <NODE bandwidth="500">
+		<HOSTNAME>hongo028</HOSTNAME>
+	      </NODE>
+	      <NODE bandwidth="500">
+		<HOSTNAME>hongo029</HOSTNAME>
+	      </NODE>
+	      <NODE bandwidth="500">
+		<HOSTNAME>hongo030</HOSTNAME>
+	      </NODE>
+	      <NODE bandwidth="500">
+		<HOSTNAME>hongo031</HOSTNAME>
+	      </NODE>
+	      <NODE bandwidth="500">
+		<HOSTNAME>hongo032</HOSTNAME>
+	      </NODE>
+	      <NODE bandwidth="500">
+		<HOSTNAME>hongo033</HOSTNAME>
+	      </NODE>
+	      <NODE bandwidth="500">
+		<HOSTNAME>hongo034</HOSTNAME>
+	      </NODE>
+	      <NODE bandwidth="500">
+		<HOSTNAME>hongo035</HOSTNAME>
+	      </NODE>
+	      <NODE bandwidth="500">
+		<HOSTNAME>hongo036</HOSTNAME>
+	      </NODE>
+	      <NODE bandwidth="500">
+		<HOSTNAME>hongo037</HOSTNAME>
+	      </NODE>
+	      <NODE bandwidth="500">
+		<HOSTNAME>hongo038</HOSTNAME>
+	      </NODE>
+	      <NODE bandwidth="500">
+		<HOSTNAME>hongo039</HOSTNAME>
+	      </NODE>
+	      <NODE bandwidth="500">
+		<HOSTNAME>hongo040</HOSTNAME>
+	      </NODE>
+	      <SWITCH bandwidth="900">
+		<NODE bandwidth="500">
+		  <HOSTNAME>hongo041</HOSTNAME>
+		</NODE>
+		<NODE bandwidth="500">
+		  <HOSTNAME>hongo042</HOSTNAME>
+		</NODE>
+		<NODE bandwidth="500">
+		  <HOSTNAME>hongo043</HOSTNAME>
+		</NODE>
+		<NODE bandwidth="500">
+		  <HOSTNAME>hongo044</HOSTNAME>
+		</NODE>
+		<NODE bandwidth="500">
+		  <HOSTNAME>hongo045</HOSTNAME>
+		</NODE>
+		<NODE bandwidth="500">
+		  <HOSTNAME>hongo046</HOSTNAME>
+		</NODE>
+		<NODE bandwidth="500">
+		  <HOSTNAME>hongo047</HOSTNAME>
+		</NODE>
+		<NODE bandwidth="500">
+		  <HOSTNAME>hongo048</HOSTNAME>
+		</NODE>
+		<NODE bandwidth="500">
+		  <HOSTNAME>hongo049</HOSTNAME>
+		</NODE>
+		<NODE bandwidth="500">
+		  <HOSTNAME>hongo050</HOSTNAME>
+		</NODE>
+		<NODE bandwidth="500">
+		  <HOSTNAME>hongo051</HOSTNAME>
+		</NODE>
+		<NODE bandwidth="500">
+		  <HOSTNAME>hongo052</HOSTNAME>
+		</NODE>
+		<NODE bandwidth="500">
+		  <HOSTNAME>hongo053</HOSTNAME>
+		</NODE>
+		<NODE bandwidth="500">
+		  <HOSTNAME>hongo054</HOSTNAME>
+		</NODE>
+		<SWITCH bandwidth="900">
+		  <NODE bandwidth="500">
+		    <HOSTNAME>hongo055</HOSTNAME>
+		  </NODE>
+		  <NODE bandwidth="500">
+		    <HOSTNAME>hongo056</HOSTNAME>
+		  </NODE>
+		  <NODE bandwidth="500">
+		    <HOSTNAME>hongo057</HOSTNAME>
+		  </NODE>
+		  <NODE bandwidth="500">
+		    <HOSTNAME>hongo058</HOSTNAME>
+		  </NODE>
+		  <NODE bandwidth="500">
+		    <HOSTNAME>hongo059</HOSTNAME>
+		  </NODE>
+		  <NODE bandwidth="500">
+		    <HOSTNAME>hongo060</HOSTNAME>
+		  </NODE>
+		  <NODE bandwidth="500">
+		    <HOSTNAME>hongo061</HOSTNAME>
+		  </NODE>
+		  <NODE bandwidth="500">
+		    <HOSTNAME>hongo062</HOSTNAME>
+		  </NODE>
+		  <NODE bandwidth="500">
+		    <HOSTNAME>hongo063</HOSTNAME>
+		  </NODE>
+		  <NODE bandwidth="500">
+		    <HOSTNAME>hongo064</HOSTNAME>
+		  </NODE>
+		  <NODE bandwidth="500">
+		    <HOSTNAME>hongo065</HOSTNAME>
+		  </NODE>
+		  <NODE bandwidth="500">
+		    <HOSTNAME>hongo066</HOSTNAME>
+		  </NODE>
+		  <NODE bandwidth="500">
+		    <HOSTNAME>hongo067</HOSTNAME>
+		  </NODE>
+		  <NODE bandwidth="500">
+		    <HOSTNAME>hongo068</HOSTNAME>
+		  </NODE>
+		  <NODE bandwidth="500">
+		    <HOSTNAME>hongo069</HOSTNAME>
+		  </NODE>
+		</SWITCH>
+	      </SWITCH>
+	    </SWITCH>
+	  </SWITCH>
+	</SWITCH>
+      </SWITCH> <!-- HONGO000 -->
+      
+      <SWITCH bandwidth="1000"> <!-- HONGO100 hongo???. -->
+	<NODE bandwidth="900">
+	  <HOSTNAME>hongo100</HOSTNAME>
+	</NODE>
+	<NODE bandwidth="900">
+	  <HOSTNAME>hongo101</HOSTNAME>
+	</NODE>
+	<NODE bandwidth="900">
+	  <HOSTNAME>hongo102</HOSTNAME>
+	</NODE>
+	<NODE bandwidth="900">
+	  <HOSTNAME>hongo103</HOSTNAME>
+	</NODE>
+	<NODE bandwidth="900">
+	  <HOSTNAME>hongo104</HOSTNAME>
+	</NODE>
+	<NODE bandwidth="900">
+	  <HOSTNAME>hongo105</HOSTNAME>
+	</NODE>
+	<NODE bandwidth="900">
+	  <HOSTNAME>hongo106</HOSTNAME>
+	</NODE>
+	<NODE bandwidth="900">
+	  <HOSTNAME>hongo107</HOSTNAME>
+	</NODE>
+	<NODE bandwidth="900">
+	  <HOSTNAME>hongo108</HOSTNAME>
+	</NODE>
+	<NODE bandwidth="900">
+	  <HOSTNAME>hongo109</HOSTNAME>
+	</NODE>
+	<NODE bandwidth="900">
+	  <HOSTNAME>hongo110</HOSTNAME>
+	</NODE>
+	<NODE bandwidth="900">
+	  <HOSTNAME>hongo111</HOSTNAME>
+	</NODE>
+	<NODE bandwidth="900">
+	  <HOSTNAME>hongo112</HOSTNAME>
+	</NODE>
+	<NODE bandwidth="900">
+	  <HOSTNAME>hongo113</HOSTNAME>
+	</NODE>
+	<NODE bandwidth="900">
+	  <HOSTNAME>hongo114</HOSTNAME>
+	</NODE>
+	<NODE bandwidth="900">
+	  <HOSTNAME>hongo115</HOSTNAME>
+	</NODE>
+	<NODE bandwidth="900">
+	  <HOSTNAME>hongo116</HOSTNAME>
+	</NODE>
+	<NODE bandwidth="900">
+	  <HOSTNAME>hongo117</HOSTNAME>
+	</NODE>
+      </SWITCH> <!-- END OF HONGO100 -->
+    </SWITCH> <!-- END OF HONGO -->
+
+    
+    <SWITCH bandwidth="900"> <!-- SUZUK suzuk???. -->
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk-charlie</HOSTNAME>
+      </NODE>
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk000</HOSTNAME>
+      </NODE>
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk001</HOSTNAME>
+      </NODE>
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk002</HOSTNAME>
+      </NODE>
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk003</HOSTNAME>
+      </NODE>
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk004</HOSTNAME>
+      </NODE>
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk005</HOSTNAME>
+      </NODE>
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk006</HOSTNAME>
+      </NODE>
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk007</HOSTNAME>
+      </NODE>
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk008</HOSTNAME>
+      </NODE>
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk009</HOSTNAME>
+      </NODE>
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk010</HOSTNAME>
+      </NODE>
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk011</HOSTNAME>
+      </NODE>
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk012</HOSTNAME>
+      </NODE>
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk013</HOSTNAME>
+      </NODE>
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk014</HOSTNAME>
+      </NODE>
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk015</HOSTNAME>
+      </NODE>
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk016</HOSTNAME>
+      </NODE>
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk017</HOSTNAME>
+      </NODE>
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk018</HOSTNAME>
+      </NODE>
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk019</HOSTNAME>
+      </NODE>
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk020</HOSTNAME>
+      </NODE>
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk021</HOSTNAME>
+      </NODE>
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk022</HOSTNAME>
+      </NODE>
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk023</HOSTNAME>
+      </NODE> 
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk024</HOSTNAME>
+      </NODE> 
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk025</HOSTNAME>
+      </NODE> 
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk026</HOSTNAME>
+      </NODE> 
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk027</HOSTNAME>
+      </NODE> 
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk028</HOSTNAME>
+      </NODE> 
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk029</HOSTNAME>
+      </NODE> 
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk030</HOSTNAME>
+      </NODE> 
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk031</HOSTNAME>
+      </NODE> 
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk032</HOSTNAME>
+      </NODE> 
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk033</HOSTNAME>
+      </NODE> 
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk034</HOSTNAME>
+      </NODE> 
+      <NODE bandwidth="900">
+	<HOSTNAME>suzuk035</HOSTNAME>
+      </NODE> 
+   </SWITCH> <!-- END OF SUZUK -->
+
+
+    <SWITCH bandwidth="8"> <!-- KYOTO & IMADE-->
+      <SWITCH bandwidth="100"> <!-- KYOTO -->
+	<NODE bandwidth="900">
+	  <HOSTNAME>kyoto-charlie</HOSTNAME>
+	</NODE>
+	<NODE bandwidth="900">
+	  <HOSTNAME>kyoto000</HOSTNAME>
+	</NODE>
+	<NODE bandwidth="900">
+	  <HOSTNAME>kyoto001</HOSTNAME>
+	</NODE>
+	<NODE bandwidth="900">
+	  <HOSTNAME>kyoto002</HOSTNAME>
+	</NODE>
+      </SWITCH> <!-- END OF KYOTO -->
+
+      <SWITCH bandwidth="100"> <!-- IMADE -->
+	<NODE bandwidth="900">
+	  <HOSTNAME>imade-charlie</HOSTNAME>
+	</NODE>
+	<NODE bandwidth="900">
+	  <HOSTNAME>imade000</HOSTNAME>
+	</NODE>
+	<NODE bandwidth="900">
+	  <HOSTNAME>imade001</HOSTNAME>
+	</NODE>
+	<NODE bandwidth="900">
+	  <HOSTNAME>imade002</HOSTNAME>
+	</NODE>
+      </SWITCH> <!-- END OF IMADE -->
+    </SWITCH> <!-- END OF IMADE -->
+  </SWITCH>
+</CLUSTER>
+

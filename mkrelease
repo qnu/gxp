@@ -1,0 +1,46 @@
+#!/bin/bash
+#
+# How to make a release
+# (1) make sure ChangeLog looks good
+# (2) edit RELEASE_NUMBER number below
+# (3) ./mkrelease
+# (4) goto file release page 
+# (https://sourceforge.net/project/admin/editreleases.php?package_id=282790&group_id=233088)
+# (5) remember to Create/ Edit download page and change primary download file
+# see the bottom of this file
+#
+
+# convention. increase this number BEFORE you make a release
+# (i.e., if RELEASE_NUMBER=04, it means version 3.04 HAS BEEN released)
+RELEASE_NUMBER=3.07
+
+# taura -> ttaauu
+
+if [ ! $# -eq 1 ]; then
+  echo "Usage: $0 YOUR_SOURCEFORGE_ACCOUNT"
+  exit 1
+fi
+
+USER=$1
+DIR=gxp-${RELEASE_NUMBER}
+
+cvs up
+echo ${RELEASE_NUMBER} > RELEASE_NUMBER
+cvs ci -m "commit to make release ${RELEASE_NUMBER}" RELEASE_NUMBER mkrelease
+mkdir -p releases
+cd releases
+cvs -d :ext:${USER}@gxp.cvs.sourceforge.net:/cvsroot/gxp export -r HEAD gxp3
+mv gxp3 ${DIR}
+tar cvf ${DIR}.tar ${DIR}
+bzip2 ${DIR}.tar
+rsync -avP -e ssh ${DIR}.tar.bz2 ${USER}@frs.sourceforge.net:uploads/
+cd ..
+
+ls releases
+
+cat <<EOF 
+now login sourceforge from https://sourceforge.net/account/login.php
+and https://sourceforge.net/project/admin/editreleases.php?package_id=282790&group_id=233088
+(if you are lost, login goto Admin -> File Release)
+EOF
+

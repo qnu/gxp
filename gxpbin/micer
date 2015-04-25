@@ -1,0 +1,803 @@
+#!/usr/bin/env python
+
+import signal,popen2,sys,os,time,re,getopt,glob,socket,errno,resource,re,pwd
+from xml.dom.minidom import parse, parseString
+
+dbg = 0
+
+def Es(s):
+    sys.stderr.write((" " + s))
+    sys.stderr.flush()
+
+class ProcReaderException:pass
+
+class ProcReader:
+    DEBUG_DEBUG = 2
+    DEBUG_INFO = 1
+    DEBUG_ERROR = 0
+    def __init__(self):
+        '''
+        {cur|prev}_jiffies_table:   [pid]           -->  procinfo
+        {cur|prev}_secs         :
+        meminfo                 :   [meminfo_entry] -->  entry value in [KB], each value in int
+        hz                      :   kernel Hz in [Hz], value in int
+        ncpus                   :   NCPUS, value in int
+        dbg                     :   debug level, should be DEBUG_ERROR normally
+        '''
+        self.hz = 0
+        self.ncpus = 0
+        self.dbg = dbg
+        self.pcpus = {}
+        self.users = {}
+        self.states = {}
+        self.uid_table = {}
+        self.comm_ptn = re.compile('^(\d+)\s+\((.*)\)\s+([RSDZTW])\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+([\d\-]+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+([\d\-]+)\s+([\d\-]+)\s+([\d\-]+)\s+([\d\-]+)\s+(\d+)\s+');
+
+        # working vars to calc pcpu
+        self.cur_secs = 0.0
+        self.prev_secs = 0.0
+        self.cur_jiffies_table = {}
+        self.prev_jiffies_table = {}
+
+        #calc the number of cpus
+        self.num_cpus()
+        #calc the kernel Hz
+        self.kernel_hz()
+        #get process info to begin with
+        self.probe_procs()
+
+    def file_reader(self, filename):
+        '''
+        raises IOError
+        '''
+        return open(filename, "r").read()
+
+    def num_cpus(self):
+        '''
+        sets:
+           self.ncpus
+        returns:
+           the number of CPUS
+           on success, return NCPUS > 0
+           on failure, return 0
+        '''
+        if self.ncpus:
+            return self.ncpus
+        try:
+            ret = self.file_reader("/proc/stat")
+            self.ncpus = ret.count("cpu") - 1
+        except IOError:
+            self.ncpus = 0
+        if self.dbg >= self.DEBUG_DEBUG:
+            Es("NCPUS: %d\n" % (self.ncpus))
+        return self.ncpus
+
+    def kernel_hz(self):
+        '''
+        estimate the kernel Hz [jiffies/(sec*ncpus)]
+
+        sets:
+           self.hz
+        returns:
+           kernel Hz on success
+           0 on failure
+        '''
+        if self.hz:
+            return self.hz
+        ncpus = self.num_cpus()
+        assert(ncpus > 0)
+
+        try:
+            up_sec = float(self.file_reader("/proc/uptime").split()[0])
+            stat = self.file_reader("/proc/stat").split()
+            #calculate total jiffies since system up
+            jiffies = int(stat[1]) + int(stat[2]) + int(stat[3]) + int(stat[4]) + int(stat[5]) + int(stat[6]) + int(stat[7])
+        except IOError:
+            if self.dbg >= self.DEBUG_ERROR:
+                Es("could not read /proc/uptime or /proc/stat to calculate Kernel Hz ...\n")
+            return 0
+        hz = (jiffies / (up_sec * ncpus))
+        if self.dbg >= self.DEBUG_DEBUG:
+            Es("estimated hz : %.3f [Hz]\n" % (hz))
+
+        if   hz > 9   and hz < 11:    self.hz = 10   # S/390 (sometimes)
+        elif hz > 18  and hz < 22:    self.hz = 20   # user-mode Linux
+        elif hz > 30  and hz < 34:    self.hz = 34   # ia64 emulator
+        elif hz > 48  and hz < 52:    self.hz = 50
+        elif hz > 58  and hz < 61:    self.hz = 60
+        elif hz > 62  and hz < 65:    self.hz = 64   # StrongARM /Shzark
+        #elif hz > 95  and hz < 105:   self.hz = 100  # normal Linux
+        elif hz > 90   and hz < 110:  self.hz = 100  # normal Linux
+        elif hz > 124  and hz < 132:  self.hz = 128  # MIPS, ARM
+        elif hz > 195  and hz < 204:  self.hz = 200  # normal << 1
+        elif hz > 253  and hz < 260:  self.hz = 256
+        elif hz > 393  and hz < 408:  self.hz = 400  # normal << 2
+        elif hz > 790  and hz < 808:  self.hz = 800  # normal << 3
+        elif hz > 990  and hz < 1010: self.hz = 1000 # ARM
+        elif hz > 1015 and hz < 1035: self.hz = 1024 # Alpha, ia64
+        elif hz > 1180 and hz < 1220: self.hz = 1200 # Alpha
+
+        if self.dbg >= self.DEBUG_DEBUG:
+            Es("final Hz : %d [Hz]\n" % (self.hz))
+        return self.hz
+
+    def calc_pcpu(self, proc_jiffies, sys_dt):
+        '''
+        given the total jiffies used by a proc,
+        and the delta system time during the time,
+        give the percentage of CPU time used
+
+        sys_jiffies = sys_dt * kernel_Hz * NCPUS
+
+        sys_jiffies is the total amount of jiffies consumed by ALL cpus
+        for N cpus, the max pcpu of a process is 100/N %
+        '''
+        assert(self.hz != 0)
+        assert(self.ncpus != 0)
+        #sys_jiffies = sys_dt * self.hz * self.ncpus
+        sys_jiffies = sys_dt * self.hz
+        #set ceiling to 100/NCPUS
+        #return min(100.0 * proc_jiffies / sys_jiffies, 100.0 / self.ncpus)
+        return min(100.0 * proc_jiffies / sys_jiffies, 100.0)
+
+    def probe(self):
+        '''
+        get all information that needs to be gathered in one probe
+
+        currently:
+        date
+        loadavg
+        meminfo
+        vmstat
+        proc_infos
+        proc_pcpu
+
+        TODO:
+        netstat?
+
+        returns:
+        "" on success, reason on failure
+
+        '''
+        msg = self.probe_procs()
+        if msg != "":
+            return "probe_procs:" + msg
+        msg = self.calc_diff()
+        if msg != "":
+            return "calc_diff:" + msg
+        return ""
+
+    def probe_procs(self):
+        '''
+        scan through /proc/[pid] for information about each active process
+        record each process info in the cur_proc_table
+
+        the previous cur_proc_table is retired into the prev_proc_table
+
+        sets:
+        self.prev_proc_table
+        self.cur_proc_table
+
+        returns:
+        "" on success, reason on failure
+        '''
+        msg = ""
+        proc_dir_list = glob.glob("/proc/[0-9]*")
+        # flush previous data
+        self.prev_jiffies_table = self.cur_jiffies_table
+        self.cur_jiffies_table = {}
+        self.users = {}
+        self.states = {}
+        #print "cur:%d, prev:%d"%(self.cur_secs, self.prev_secs)
+        self.prev_secs = self.cur_secs
+        self.cur_secs = time.time()
+
+        stat = self.file_reader("/proc/stat").split()
+        # jiffies = user + nice + system
+        jiffies = int(stat[1]) + int(stat[2]) + int(stat[3])
+
+        #remember, any proc_dir can disappear at anytime (when
+        #the process terminates). be prepared for those situations
+        for proc_dir in proc_dir_list:
+            #get user name
+            uid = None
+            try:
+                uid = os.stat ( "%s/cmdline" % proc_dir ).st_uid
+            except:
+                continue
+            if uid not in self.uid_table:
+                try:
+                    user = pwd.getpwuid(uid)[0]
+                    self.uid_table[uid] = user
+                except:
+                    msg += "Getting username of uid %d failed" % uid
+                    user = uid
+            else:
+                user = self.uid_table[uid]
+
+            #get fine details of proc
+            try:
+                stat_line = self.file_reader(proc_dir + "/stat")
+            except IOError:
+                if self.dbg >= self.DEBUG_ERROR:
+                    msg += "failed to read file under %s\n" % proc_dir
+                continue
+
+            try:
+                m = self.comm_ptn.match(stat_line)
+                pid   = int(m.group(1))
+                #comm  = m.group(2)
+                state = m.group(3)
+                ppid  = int(m.group(4))  # parent's pid
+                utime = int(m.group(14)) # in jiffies
+                stime = int(m.group(15)) # in jiffies
+                #prio  = int(m.group(18))
+                #nice  = int(m.group(19)) #TODO: Is it ok for realtime procs?
+                #rss = int(m.group(24)) * self.pagesize  # in pages * 4096
+                #pmem = float(rss) / self.memsize
+            except:
+                if self.dbg >= self.DEBUG_ERROR:
+                    msg += "failed to parse /proc/pid/stat for %s : %s\n" % (proc_dir[6:], stat_line)
+                continue
+
+            #register into table
+            self.cur_jiffies_table[pid] = (ppid, utime + stime)
+            jiffies -= utime + stime
+            self.users[pid] = user
+            self.states[pid] = state
+
+        # count CPU time which cannot be blamed on a user
+        self.cur_jiffies_table[-1] = (-1, jiffies)
+        self.users[-1] = "Unknown"
+        self.states[-1] = "S"
+        return msg
+
+    def calc_diff(self):
+        '''
+        calculated the pcpu information for each active process by
+        comparing the cur_jiffies_table and the prev_jiffies_table
+
+        sets:
+        self.pcpus
+
+        returns:
+        "" on success, reason on failure
+        '''
+        msg = ""
+        passed_secs = self.cur_secs - self.prev_secs
+
+        for pid, (ppid, jiffies) in self.cur_jiffies_table.iteritems():
+            #if the process existed in the previous snapshot
+            if pid in self.prev_jiffies_table:
+                prev_ppid, prev_jiffies = self.prev_jiffies_table[pid]
+                #just to make sure that this is the same process (compare parent pid)
+                if ppid == prev_ppid:
+                    jiffies -= prev_jiffies
+                    if jiffies < 0:
+                        if (self.dbg >= self.DEBUG_DEBUG) or ((pid != -1) and (self.dbg >= self.DEBUG_ERROR)):
+                            msg += "pid %d(%s) jiffies (%d) is smaller than zero\n" % (pid, self.users[pid], jiffies)
+                        jiffies = 0
+            pcpu = self.calc_pcpu(jiffies, passed_secs)
+            self.pcpus[pid] = pcpu
+
+            if self.dbg >= self.DEBUG_DEBUG:
+                if pcpu > 10.0 or (pid == -1 and jiffies > 0):
+                    msg += "pid %d(%s) jiffies %d secs %.6f --> pcpu %.3f\n" % (pid, self.users[pid], jiffies, passed_secs, pcpu)
+        return msg
+
+    def is_still_alive(self, pid):
+        if pid not in self.users:
+            return None
+        return self.states[pid]
+
+    def get_nicer_info(self, mom_users, me, mom_pct):
+        """ Returns unrecognized (a.k.a Nora) pcpu: (mine, others') """
+        u_pcpu = {}
+        for pid,pcpu in self.pcpus.items():
+            if pid in self.users:
+                user = self.users[pid]
+                if user in u_pcpu:
+                    u_pcpu[user] += pcpu
+                else:
+                    u_pcpu[user] = pcpu
+        for user in mom_users:
+            if user in u_pcpu:
+                u_pcpu[user] -= mom_pct
+                if u_pcpu[user] < 0.0:
+                    u_pcpu[user] = 0.0
+        other_pcpu = 0.0
+        my_pcpu = 0.0
+        for user,pcpu in u_pcpu.items():
+            if user == me:
+                if self.dbg >= self.DEBUG_DEBUG:
+                    Es("my pcpu = %.3f\n" % pcpu)
+                my_pcpu = pcpu
+            else:
+                other_pcpu += pcpu
+        return (my_pcpu, other_pcpu)
+
+class W:
+    """ Obtain information about users"""
+    def __init__(self, env):
+        self.nUsers = 0
+        self.env = env
+
+    def update(self):
+        nUsers = 0
+        p = popen("w -hs")
+        for l in p.fromchild.readlines():
+            (uid,idle) = self.parse(l)
+            if uid == self.env.me:
+                continue
+            if uid in self.env.poorUsers:
+                continue
+            if uid not in self.env.vipUsers:
+                if idle >= self.env.maxIdle:
+                    continue
+            nUsers += 1
+        pclose(p)
+        self.nUsers = nUsers
+
+    def parse(self, l):
+        assert l != ""
+        ptn = re.compile("^\s*(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.+)\s*")
+        mo = ptn.match(l)
+        if mo is None:
+            Es("Err: cannot parse %s\n"%(l))
+            assert False
+        uid  = mo.group(1)
+        #term = mo.group(2)
+        #host = mo.group(3)
+        idle = self.parse_idle(mo.group(4))
+        #cmd  = mo.group(5)
+        #return {'uid':uid, 'idle':idle}
+        return (uid, idle)
+
+    def parse_idle(self, st):
+        mo = re.search("(\d+)days", st)
+        if mo is not None:
+            d = int(mo.group(1))
+            return d * 24 * 60 * 60
+        mo = re.search("(\d+):(\d+)m", st)
+        if mo is not None:
+            h = int(mo.group(1))
+            m = int(mo.group(2))
+            return (h * 60 + m)* 60
+        mo = re.search("(\d+).(\d+)s", st)
+        if mo is not None:
+            ud = int(mo.group(1))
+            ld = int(mo.group(2))
+            return ud
+        mo = re.search("(\d+):(\d+)", st)
+        if mo is not None:
+            m = int(mo.group(1))
+            s = int(mo.group(2))
+            return m * 60 + s
+        Es("*** Error : illegal format of time %s\n"%st)
+        sys.exit(1)
+
+class Env(object):
+    def __init__(self, args):
+        self.setDefaults()
+        self.setWorkVars()
+        self.getopt(args)
+
+    def setDefaults(self):
+        self.pcpuDown = 33.3 # CPU % : To make child process down
+        self.pcpuUp   = 25.0 # CPU % : To make child process up
+        self.pcpuMom  = 90.0 # CPU % : Processes spawned from batch schedulers can occupy
+        self.ignoreNice = 19      # Don't ignore any processes other than NI == 19
+        self.poorUsers = []
+        self.vipUsers = []
+        self.shortSleep = 2.0
+        self.longSleep = 32.0
+        # Assume the user is idle
+        self.maxIdle = 10
+
+    def setWorkVars(self):
+        self.procs = {}
+        self.attach = None
+        if "USER" in os.environ:
+            self.me = os.environ["USER"]
+        elif "LOGNAME" in os.environ:
+            self.me = os.environ["LOGNAME"]
+        # peek counter
+        self.maxPeeks = 5
+        # Assume ready to run if the condition is satisfied 'max_peeks' times
+        self.peek = 0
+        self.stopflag = False
+        self.childStatus = 0
+
+    def getopt(self,args):
+        try:
+            opts, args = getopt.getopt(args[1:], "a:hv:c:i:",
+                                       ["exit-silently", "vip-users", "ignore-users", "help", "attach"])
+        except getopt.GetoptError:
+            self.usage()
+            print "(Given option: %s)" % " ".join(args[1:])
+            sys.exit(2)
+
+        for o, a in opts:
+            if o == "--exit-silently":
+                sys.exit(0)
+            elif o in ("-h", "--help"):
+                self.usage()
+            elif o in ("-a", "--attach"):
+                self.attach = a
+            elif o in ("-v", "--vip-users"):
+                users = a.split(",")
+                for u in users:
+                    self.vipUsers.append(u)
+            elif o in ("-i", "--ignore-users"):
+                users = a.split(",")
+                for u in users:
+                    self.poorUsers.append(u)
+        if self.attach is None:
+            if len(args) == 0:
+                Es("Error: Command is not specified\n")
+                self.usage()
+                sys.exit(1)
+            else:
+                self.command = args[0]
+                if ";" in self.command:
+                    self.command = "sh -c '%s\'"%self.command
+                self.runargs = args
+        else:
+            if len(args) > 0:
+                Es("Info: Given command(%s) is neglected\n"%(args[0]))
+
+    def usage(self):
+        print "Usage: nicer [options] command\n"
+        print " Options: "
+        print "     -a, --attach PATTERN    : Attach to processes whose names match to the PATTERN"
+        print "     -i, --ignore-users USER1,USER2,... : Ignore specified users. "
+        print "     -v, --vip-users USER1,USER2,...    : "
+        print "     -h, --help : Show this help"
+        print ""
+
+    def printOpts(self):
+        for a in self.__dict__:
+            print a,self.__dict__[a]
+
+def popen(cmd,useErr=False):
+    p = popen2.Popen3(cmd,useErr)
+    if p is None:
+        Es("Err: cannot execute '%s'\n"%(cmd))
+        sys.exit(1)
+    return p
+
+def pclose(p):
+    p.fromchild.close()
+    if p.childerr != None:
+        p.childerr.close()
+    p.tochild.close()
+    os.waitpid(p.pid, 0)
+
+class ProcManager:
+    """ Manage job processes """
+    def __init__(self, env, reader):
+        self.env = env
+        self.reader = reader
+        self.dbg = dbg
+
+    def killall(self):
+        if self.dbg >= 1: Es("Info: Killall\n")
+        ks = self.env.procs.keys()
+        for p in ks:
+            self.kill(-p, signal.SIGKILL)
+            self.waitpid(p)
+            if p in self.env.procs:
+                self.env.procs.pop(p)
+
+    def killZombies(self):
+        for p in self.env.procs.keys():
+            state = self.reader.is_still_alive(p)
+            if state is None:
+                if self.dbg >= 1:
+                    Es("Info: pid %d has disappeared\n"%(p))
+                del self.env.procs[p]
+            elif state == "Z":
+                self.waitpid(p)
+                self.env.procs.pop(p)
+                if self.dbg >= 1: Es("Info: Collected one zombie(%d)\n"%(p))
+            else:
+                pass
+                #print "(%d,%s)"%(p,state)
+
+    def cont(self):
+        if self.dbg >= 1: Es("Info: Now ready to continue\n")
+        for p in self.env.procs:
+            self.kill(-p, signal.SIGCONT)
+
+    def stop(self):
+        if self.dbg >= 1: Es("Info: Stopping procs\n")
+        for p in self.env.procs.keys():
+            self.kill(-p, signal.SIGSTOP)
+
+    ### Private functions come after here:
+    def attachTo(self, proc):
+        self.env.procs[proc] = True
+
+    def kill(self, pid, signal):
+        try:
+            os.kill(pid, signal)
+        except OSError, (err, str):
+            if err == errno.ESRCH:
+                if pid < 0:
+                    pid = -pid
+                if self.dbg >= 1:
+                    Es("Info: pid %d has disappeared\n"%(pid))
+                del self.env.procs[pid]
+            else:
+                Es("Error: Sending signal %d to %d failed\n"%(signal, pid))
+
+    def waitpid(self, pid):
+        if self.dbg >= 1: Es("Info: Waitpid %d\n"%(pid))
+        try:
+            qid,stat = os.waitpid(pid, 0)
+        except:
+            Es("Error: child process has already been dead\n")
+        assert pid == qid, (pid, qid)
+        if pid == self.env.childPid:
+            env = self.env
+            if os.WIFEXITED(stat):
+                env.childStatus = os.WEXITSTATUS(stat)
+            elif os.WIFSIGNALED(stat):
+                env.childStatus = os.WTERMSIG(stat) + 128
+
+    def launch(self, cmd, args):
+        child = os.fork()
+        if child == -1:
+            Es("Error: during fork()\n")
+            self.killall()
+        if child == 0:
+            if os.setpgrp() == -1:
+                Es("Error: Cannot execute 'setpgrp()'\n")
+                self.killall()
+                sys.exit(1)
+            if self.dbg >= 1:
+                Es("Info: lanuched\n")
+            try:
+                os.execvp(cmd, args)
+            except Exception, e:
+                Es("Error: cannot execute command %s\n"%(cmd))
+                Es("      %s\n"%(str(e)))
+            # Cannot reach here
+            sys.exit(0)
+        else:
+            self.env.procs[child] = True
+            self.env.childPid = child
+            #if not self.env.runnable:
+            #    self.kill(-child, signal.SIGSTOP)
+
+class Mom:
+    def __init__(self, reader):
+        self.reader = reader
+        self.dbg = dbg
+        self.job_user = {}
+
+    def getMomUsers(self, hostname = None):
+        if hostname is None:
+            hostname = socket.gethostname()
+        jobs = self.lookupJobs(hostname)
+        #print "jobs = %s\n"%(" ".join(jobs))
+        if jobs is None:
+            if self.dbg >= 1:
+                Es("Error: Failed to get status from pbsnodes\n")
+            return []
+        elif jobs == []:
+            return []
+        else:
+            #jobs -> users
+            return map(lambda(x):self.get_user_from_jobid(x), jobs)
+
+    def lookupJobs(self, hostname):
+        # For torque 2.3.0
+        def getText(node):
+            for n in node.childNodes:
+                if n.nodeType == node.TEXT_NODE:
+                    return n.data
+            else:
+                return ""
+        p = popen("LANG=C pbsnodes -x")
+        msg = p.fromchild.read()
+        pclose(p)
+        try:
+            dom = parseString(msg)
+            for node in dom.getElementsByTagName("Node"):
+                name,jobs = '',''
+                for n in node.childNodes:
+                    if n.tagName == "name":
+                        name = getText(n)
+                        if name.find(hostname) < 0:
+                            break
+                    elif n.tagName == "jobs":
+                        jobs = getText(n)
+                if name.find(hostname) >= 0:
+                    if jobs == "":
+                        return []
+                    return map(lambda(x):x.split("/")[1], jobs.split(", "))
+        except:
+            pass
+        return None
+
+    def get_user_from_jobid(self, jobid):
+        """
+        returns the owner of the specified job.
+        jobs files are assumed to have "JOBID USERID GROUPID" for each line and
+        the first part of the jobid must be the sequence number of jobids.
+
+        An example of /var/spool/torque/mom_priv/prologue.parallel follows:
+        #!/bin/sh
+        D=`date +%y%m%d`
+        echo $1 $2 $3 >> ../mom_logs/jobs$D
+
+        TODO: support for many queues
+        """
+        if jobid in self.job_user:
+            return self.job_user[jobid]
+        jobseq = int(jobid.split(".")[0])
+        mom_logs_dir = "/var/spool/torque/mom_logs"
+        logfiles = glob.glob("%s/jobs*" % (mom_logs_dir))
+        logfiles.sort()
+        min_jobseq = jobseq + 1
+        while(len(logfiles) > 0):
+            f = logfiles.pop()
+            try:
+                fp = open(f, "r")
+            except:
+                if self.dbg >= 1:
+                    Es("Error: cannot open %s\n" % (f))
+                return "Unknown"
+            while True:
+                line = fp.readline()
+                if line == '':
+                    break
+                (l_jobid, l_user) = line.split()[:2]
+                l_jobseq = int(l_jobid.split(".")[0])
+                if min_jobseq > l_jobseq:
+                    min_jobseq = l_jobseq
+                if jobid != l_jobid:
+                    continue
+                user = l_user
+                if self.dbg >= 1:
+                    Es("Info: job %s: owner is %s\n" % (jobid, user))
+                fp.close()
+                self.job_user[jobid] = user
+                return user
+            fp.close()
+            if min_jobseq < jobseq:
+                break
+        return "Unknown"
+
+class Micer:
+    def __init__(self):
+        self.set_sig_handlers()
+        self.env = Env(sys.argv)
+        self.w = W(self.env)
+        self.reader = ProcReader()
+        self.procman = ProcManager(self.env, self.reader)
+        self.mom = Mom(self.reader)
+        self.pcpu = 0.0
+        self.running = False
+        self.sleeptime = self.env.shortSleep
+        self.dbg = dbg
+        os.nice(19)
+
+    def set_sig_handlers(self):
+        signal.signal(signal.SIGTSTP, self.catch_sig)
+        signal.signal(signal.SIGHUP,  self.catch_sig)
+        signal.signal(signal.SIGQUIT, self.catch_sig)
+        signal.signal(signal.SIGINT,  self.catch_sig)
+
+    def catch_sig(self, sig, frame):
+        if (sig == signal.SIGTERM) or (sig == signal.SIGQUIT) or (sig == signal.SIGINT):
+            if self.dbg >= 1:
+                Es("Got signal.. stopping\n")
+            self.procman.killall()
+            self.env.stopflag = True #for nicer
+        elif sig == SIGHUP:
+            return
+        else:
+            Es("Ignoring signal %d\n", sig)
+            return
+
+    def runnable(self):
+        nUsers = self.w.nUsers
+        if self.dbg >= 1:
+            Es("Info: # of users = %d\n"%(nUsers))
+            Es("Info: Other users' CPU load = %f\n"%(self.pcpu))
+        if nUsers != 0:
+            if self.dbg >= 1: Es("Info: interactive users exist\n")
+            return False
+
+        # Gather information
+        mom_users = self.mom.getMomUsers()
+        (my_pcpu, self.pcpu) = self.reader.get_nicer_info(mom_users, self.env.me, self.env.pcpuMom)
+        ncpus = self.reader.num_cpus() - len(mom_users) * self.env.pcpuMom / 100.0
+
+        if self.running:
+            threshold = self.env.pcpuDown * ncpus
+            if my_pcpu > ncpus * 100:
+                if self.dbg >= 1:
+                    Es("Info: CPU load of my processes (%.3f) is higher than the limit (%.3f)\n"%(my_pcpu, ncpus * 100))
+                return False
+            if self.pcpu > threshold:
+                if self.dbg >= 1:
+                    Es("Info: CPU load of other processes (%.3f) is higher than the threshold (%.3f)\n"%(self.pcpu, threshold))
+                return False
+            else:
+                return True
+        else:
+            threshold = self.env.pcpuUp * ncpus
+            if self.pcpu > threshold:
+                return False
+            else:
+                if self.dbg >= 1:
+                    Es("Info: The process is runnable\n")
+                return True
+
+    def main(self):
+        time.sleep(0.5)
+        if self.env.attach == None:
+            self.procman.launch(self.env.command, self.env.runargs)
+        else:
+            pids = self.ps.search(self.env.attach)
+            if pids == []:
+                Es("Error: process named `%s' was not found\n"%(self.env.attach))
+            for p in pids:
+                self.procman.attachTo(p)
+        self.running = True
+
+        while True:
+            if self.dbg >= 2:
+                Es("dbg2: Loop\n")
+            # Update
+            msg = self.reader.probe()
+            if msg:
+                Es(msg)
+            self.w.update()
+            if self.env.stopflag: break
+
+            self.procman.killZombies()
+            if len(self.env.procs) == 0:
+                if self.dbg >= 1:
+                    Es("dbg1: Every process has exited\n")
+                break
+            o_sleeptime = self.sleeptime
+            if self.runnable():
+                if self.running:
+                    pass
+                else:
+                    if self.sleeptime > self.env.shortSleep:
+                        self.sleeptime /= 2
+                    else:
+                        self.sleeptime = self.env.shortSleep
+                        self.peek += 1
+                        if self.dbg >= 2:
+                            Es("Info: peek counter = %d\n"%(self.peek))
+                        if self.peek >= self.env.maxPeeks:
+                            self.running = True
+                            self.procman.cont()
+            else: # Not runnable
+                if self.running:
+                    self.procman.stop()
+                    self.running = False
+                self.peek = 0
+                self.sleeptime = self.env.longSleep
+
+            if self.dbg >= 1 and o_sleeptime != self.sleeptime:
+                Es("Info: Setting sleep time to %d\n"%(self.sleeptime))
+            time.sleep(self.sleeptime)
+
+        self.procman.killall()
+        if self.dbg >= 1:
+            Es("Info: Exiting\n")
+        sys.exit(self.env.childStatus)
+
+def main():
+    os.environ['MICER_PID'] = str(os.getpid())
+    micer = Micer()
+    micer.main()
+
+main()

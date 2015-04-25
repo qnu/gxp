@@ -1,0 +1,426 @@
+#!/usr/bin/env python
+import getopt
+import os,signal
+import sys
+import stat
+import string
+import time
+import getopt
+import re
+
+
+"""
+
+master -> worker:
+
+   task hostname cmdline
+
+worker -> master
+   avail hostname
+   status taskname info
+
+"""
+
+def E(s):
+    os.write(2, s)
+
+
+def open_for_read(file):
+    if file == "-": return sys.stdin
+    try:
+        fp = open(file, "rb")
+        return fp
+    except IOError:
+        E("Could not open %s for reading\n" % file)
+        os._exit(1)
+        
+def open_for_append(file):
+    try:
+        fp = open(file, "ab")
+        return fp
+    except IOError:
+        E("Could not open %s for writing\n" % file)
+        os._exit(1)
+
+def mk_host_regexp(p):
+    # gxp like istbs** --> istbs.*
+    # quote '.'
+    p1 = string.replace(p,   ".", "\.")
+    # ** matches everytihng including '.'
+    p2 = string.replace(p1, "**", r".+")
+    # * matches everytihng except '.'
+    p3 = string.replace(p2, "*", r"[^\.]+")
+    # ? matches a character except '.'
+    p4 = string.replace(p3, "?", r"[^\.]")
+    #
+    p5 = string.replace(p4, "+", r"*")
+    # return re.compile(p5 + "$")
+    return re.compile(p5)
+
+class task:
+    def __init__(self, name, constraint_str, predecessors, cmd):
+        self.name = name
+        # self.constraint_str = re.compile(constraint_str)
+        # E("const = %s\n" % constraint_str)
+        self.constraint_str = mk_host_regexp(constraint_str)
+        self.predecessors = predecessors
+        self.cmd = cmd
+
+class master:
+    dbg = 1
+    def __init__(self, tasks_file, status_file, log_file, inactive_file, max_tasks):
+        self.tasks_file = tasks_file
+        self.status_file = status_file
+        self.log_file = log_file
+        self.inactive_file = inactive_file
+        self.max_tasks = max_tasks
+        self.set_sig_handlers()
+
+        
+
+    def init(self):
+        if "GXP_NUM_EXECS" in os.environ:
+            self.n_workers = string.atoi(os.environ["GXP_NUM_EXECS"])
+        else:
+            self.n_workers = -1 # Adhoc setting
+
+        self.from_worker_fp = sys.stdin
+        self.to_worker_fp = sys.stdout
+
+        
+        
+        self.status = self.read_status(self.status_file)
+        self.tasks,self.line2task = self.read_tasks(self.tasks_file, self.status, self.max_tasks)
+        E("master : %d tasks\n" % len(self.tasks))
+        self.ready_tasks = {}
+        self.status_fp = open_for_append(self.status_file)
+        self.log_fp = open_for_append(self.log_file)
+        self.free_hosts = []
+        self.known_hosts = {}   # hosts that I have ever heard
+        self.n_issued = 0
+        self.n_finished = 0
+
+    def parse_status(self, info):
+        fs = string.split(info, None, 5)
+        if len(fs) < 5:
+            return None
+        elif len(fs) == 5:
+            [ name, status, elp_time, host, output_file ] = fs
+        else:
+            [ name, status, elp_time, host, output_file, finish_time ] = fs
+        return { "name" : name,
+                 "status" : string.atoi(status),
+                 "elapsed_time" : string.atof(elp_time),
+                 "exec_host" : host,
+                 "output_file_prefix" : output_file }
+
+    def read_status(self, file):
+        S = {}
+        if os.path.exists(file):
+            fp = open_for_read(file)
+            i = 1
+            while 1:
+                line = fp.readline()
+                if line == "": break
+                s = self.parse_status(line)
+                if s is None:
+                    E("%s:%d skipped broken line (%s)\n" % (file, i, line))
+                else:
+                    S[s["name"]] = s
+                i = i + 1
+            fp.close()
+        return S
+
+    # the format of a line:
+    #    taskname [on regexp] [after taskname1 taskname2 ..] ; command
+    #
+    # match against 'taskname whatever_is_remaining'
+    p = re.compile("\s*([^\s]+)\s+(.*)")
+    # match a single option
+    #   :on XXXX; rest
+    #   :after XXXX; rest
+    q = re.compile(":(on|after)\s+([^;]+);\s*(.*)")
+    def parse_task_line(self, line):
+        # parse the entire line
+        m = master.p.match(line)
+        if m is None: return None
+        name,rest = m.group(1,2)
+        opts = { "on" : "**", "after" : [] }
+        while 1:
+            # parse the first remaining options (:on XXX or :after XXX)
+            m = master.q.match(rest)
+            if m is None: break
+            kw,opt,rest = m.group(1,2,3)
+            opt = string.strip(opt)
+            if kw == "on":
+                opts[kw] = opt
+            elif kw == "after":
+                opts[kw] = string.split(opt)
+            else:
+                assert(0)
+        return task(name, opts["on"], opts["after"], rest)
+                
+        
+    def read_tasks(self, file, S, max_tasks):
+        T = {}
+        line2task = {}
+        fp = open_for_read(file)
+        i = 1
+        while max_tasks is None or i <= max_tasks:
+            line = fp.readline()
+            if line == "": break
+            line = string.strip(line)
+            t = self.parse_task_line(line)
+            if t is None:
+                E("%s:%d skipped broken line (%s)\n" \
+                  % (file, i, line))
+            else:
+                if t.name not in S:
+                    T[t.name] = (t.name, t.constraint_str,
+                                 t.predecessors, t.cmd)
+                    line2task[i] = t.name
+            i = i + 1
+        fp.close()
+        return T,line2task
+
+    def write_task_status(self, info):
+        """
+        record that a task NAME has finished with status (and some other info) = val
+        """
+        # val_s looks like
+        #   status elp_time host output_file
+        s = self.parse_status(info)
+        assert s is not None
+        name = s["name"]
+        self.status[name] = s
+        self.status_fp.write("%s %s\n" % (info, time.ctime()))
+        self.status_fp.flush()
+
+    def write_log(self, line):
+        """
+        record that a task NAME has finished with status (and some other info) = val
+        """
+        self.log_fp.write(line)
+        self.log_fp.flush()
+
+    def read_from_worker(self):
+        h = self.from_worker_fp.readline()
+        if h == "":
+            E("Master prematurely got EOF from all workers\n")
+            return -1
+        fs = string.split(string.strip(h), None, 1)
+        [ cmd, args] = fs
+        assert(cmd in [ "status", "avail" ])
+        if cmd == "status":
+            # task_done msg
+            self.write_task_status(args)
+            self.n_finished = self.n_finished + 1
+            self.write_log("%s finished %s\n" % (time.ctime(), args))
+        elif cmd == "avail":
+            [ host, n_workers ] = string.split(args, None, 1)
+            if self.n_workers == -1:
+                self.n_workers = safe_atoi(n_workers)
+            else :
+                #assert self.n_workers == safe_atoi(n_workers)
+                pass
+            self.free_hosts.append(host)
+            self.known_hosts[host] = None
+            self.write_log("%s %s available\n" % (time.ctime(), host))
+        else:
+            self.bomb()
+        return 0
+        
+    def write_to_worker(self, line):
+        if master.dbg: E("master : %s\n" % line)
+        self.to_worker_fp.write(line + "\n")
+        self.to_worker_fp.flush()
+
+    def issue_task(self, host, taskname, cmd):
+        self.n_issued = self.n_issued + 1
+        self.write_log("%s issued %s %s\n" % (time.ctime(), host, cmd))
+        self.write_to_worker("task %s %s %s" % (host, taskname, cmd))
+
+    def match_task_and_host_x(self):
+        host = self.free_hosts[-1]
+        for name,constraint,cmd in self.tasks.values():
+            if constraint.match(host):
+                break
+        else:
+            return
+        del self.tasks[name]
+        del self.free_hosts[-1]
+        self.issue_task(host, name, cmd)
+
+    def make_ready_tasks(self):
+        for name,constraint,preds,cmd in self.tasks.values():
+            # check if all predecessors have finished
+            ready = 1
+            for p in preds:
+                if p not in self.status or self.status[p]["status"] != 0:
+                    ready = 0
+                    break
+            if ready:
+                # this task may not have hosts to run it on
+                # del self.tasks[name]
+                self.ready_tasks[name] = name,constraint,preds,cmd
+
+    def read_inactive_hosts(self):
+        H = []
+        if os.path.exists(self.inactive_file):
+            fp = open(self.inactive_file, "rb")
+            line_no = 1
+            while 1:
+                line = fp.readline()
+                if line == "": break
+                fields = string.split(string.strip(line))
+                if len(fields) == 2:
+                    [ regexp,flag ] = fields
+                elif len(fields) == 1:
+                    [ regexp ] = fields
+                    flag = "0"              # omitted, means stop
+                elif len(fields) == 0:
+                    continue            # skip w/o warning
+                else:
+                    E("%s:%d: parse error %s\n" % \
+                      (self.inactive_file, line_no, line))
+                    continue
+                try:
+                    regexp = mk_host_regexp(regexp)
+                    flag = string.atoi(flag)
+                except ValueError:
+                    E("%s:%d: parse error %s\n" % (file, line_no, line))
+                H.append((regexp, flag))
+            fp.close()
+        return H
+
+    def check_active(self, host, I):
+        a = 1
+        for regexp,flag in I:
+            if regexp.match(host):
+                a = flag
+        return a
+
+    def match_task_and_host(self):
+        self.make_ready_tasks()
+        task_list = []
+        lines = self.line2task.keys()
+        lines.sort()
+        
+        for i in lines:
+            taskname = self.line2task[i]
+            if taskname in self.ready_tasks:
+                task_list.append(self.ready_tasks[taskname])
+
+        left = []
+        # E("free : %s\n" % self.free_hosts)
+        I = self.read_inactive_hosts()
+        for host in self.free_hosts:
+            if self.check_active(host, I):
+                for name,constraint,preds,cmd in task_list:
+                    if constraint.match(host):
+                        del self.tasks[name]
+                        del self.ready_tasks[name]
+                        self.issue_task(host, name, cmd)
+                        break
+                else:
+                    # no task found for that host
+                    left.append(host)
+            else:
+                E("master : host %s is inactive\n" % host)
+                left.append(host)
+        self.free_hosts = left
+
+    def show_summary(self):
+        E("master : %d tasks executed in this run. %d tasks left.\n" \
+          % (self.n_finished, len(self.tasks)))
+        n_ok = 0
+        n_ng = 0
+        for name,st in self.status.items():
+            if st["status"] == 0:
+                n_ok = n_ok + 1
+            else:
+                n_ng = n_ng + 1
+        E("master : %d tasks OK. %d tasks failed.\n" % (n_ok, n_ng))
+
+    def run(self):
+        self.init()
+        self.write_log("%s bring up\n" % time.ctime())
+        while 1:
+            if self.read_from_worker() == -1: break
+            if master.dbg:
+                E("master : %d tasks %d ready %d workers %d free %d issued %d finished\n" \
+              % (len(self.tasks) + len(self.ready_tasks),
+                 len(self.ready_tasks),
+                 self.n_workers, len(self.free_hosts),
+                 self.n_issued, self.n_finished))
+            if len(self.tasks) > 0 and len(self.free_hosts) > 0:
+                self.match_task_and_host()
+            if self.n_issued == self.n_finished \
+                    and self.n_workers == len(self.known_hosts):
+                break
+        self.to_worker_fp.close()
+        self.show_summary()
+
+    def bomb(self):
+        self.write_to_worker("")
+        self.to_worker_fp.flush()
+        self.from_worker_fp.close()
+        self.to_worker_fp.close()
+        sys.exit(1)
+
+    def catch_sig(self, sig, frame):
+        # E("Got a signal\n")
+        #os.kill(os.getpid(), signal.SIGKILL)
+        self.bomb()
+
+
+    def set_sig_handlers(self):
+        #signal.signal(signal.SIGTSTP, self.catch_sig)
+        #signal.signal(signal.SIGHUP,  self.catch_sig)
+        signal.signal(signal.SIGQUIT, self.catch_sig)
+        signal.signal(signal.SIGINT,  self.catch_sig)
+
+
+
+def usage():
+    E("usage : python %s tasks [OPTIONS]\n" % sys.argv[0])
+    E("OPTIONS :\n")
+    E("  --status : status file\n")
+    E("  --log : issue log file\n")
+    E("  --max-tasks : \n")
+    os._exit(2)
+
+def safe_atoi(s):
+    try:
+        n = string.atoi(s)
+        return n
+    except ValueError:
+        return None
+
+def parse_args(args):
+    try:
+        opts,args = getopt.getopt(args[1:], "",
+                                  [ "log=", "status=", "inactive=", "max-tasks="])
+    except getopt.GetoptError:
+        usage()
+    if len(args) != 1:
+        usage()
+    d = { "--log" : "log",
+          "--status" : "status", "--inactive" : "inactive", "--max-tasks" : None }
+    for o,a in opts:
+        d[o] = a
+    max_tasks = None
+    if d["--max-tasks"] is not None:
+        max_tasks = safe_atoi(d["--max-tasks"])
+        if max_tasks is None: usage()
+    return args[0],d["--status"],d["--log"],d["--inactive"],max_tasks
+    
+
+
+def main():
+    tasks,status,log,inactive,max_tasks = parse_args(sys.argv)
+    ma = master(tasks, status, log, inactive, max_tasks)
+    ma.run()
+        
+if __name__ == "__main__":
+    main()

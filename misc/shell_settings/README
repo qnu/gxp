@@ -1,0 +1,6 @@
+include these scripts in your shell startup files (.bashrc, etc.)  or
+'source' them with something like:
+	 . bash
+or
+	source tcsh
+

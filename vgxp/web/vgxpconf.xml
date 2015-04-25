@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<conf>
+  <debug_mode>false</debug_mode>
+  <show_status>true</show_status>
+  <state_clustering>true</state_clustering>
+  <noprocinfo>false</noprocinfo>
+  <canvas>
+    <view_rotx>26.08</view_rotx>
+    <view_roty>209.63</view_roty>
+    <view_rotz>0.0</view_rotz>
+    <target_rotx>20.0</target_rotx>
+    <target_roty>210.0</target_roty>
+    <view_zoom>0.11</view_zoom>
+    <vx>0.18</vx>
+    <vy>-0.23</vy>
+    <connect_animation>false</connect_animation>
+    <showruler>true</showruler>
+  </canvas>
+  <clusters>
+    <cluster name="some_group_name" hidden="true"/>
+
+    <static name="istxf" group="istbs"/>
+    <static name="shepherd" group="sheep"/>
+    <static name="some_host_name" group="group_name"/>
+    <regexp>
+      <pattern>([^\d\-]+)</pattern>
+      <index>1</index>
+    </regexp>
+  </clusters>
+  <graphdata>
+    <gd name="LOAD0">
+      <menuitem>CPU Usage</menuitem>
+      <description>CPU Usage graph</description>
+      <unit>%</unit>
+      <disp_min>0</disp_min>
+      <disp_max>800</disp_max>
+      <value_factor>100</value_factor>
+      <is_hard_min>true</is_hard_min>
+      <is_hard_max>false</is_hard_max>
+      <graph_color>0</graph_color>
+      <hash_key>C</hash_key>
+      <data_idx>0</data_idx>
+      <accelerator>F2</accelerator>
+    </gd>
+  </graphdata>
+</conf>

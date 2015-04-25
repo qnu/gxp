@@ -1,0 +1,29 @@
+
+[1] Semantics of sigchld: 
+
+What if another child terminates while executing sigchild handler?
+At least in python, some signals seem lost. see sigch_test.py
+
+[2] SSH/RSH behavior
+
+	ssh command
+
+does not close its standard out when command does. To see this,
+write the following program
+
+#include <stdio.h>
+main()
+{
+  fprintf(stdout, "hello\n");
+  fclose(stdout);
+  sleep(5);
+}
+
+and run:
+
+	/full/path/a.out | wc
+and
+	ssh host /full/path/a.out | wc
+
+The former immediately outputs wc's result. For the latter, it is
+output only after the process terminates (5 sec. later).

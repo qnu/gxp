@@ -1,0 +1,343 @@
+#!/usr/bin/env python
+# -*- python -*-
+
+import sys, os, getopt, socket, select, time, re
+
+class Channel:
+    def __init__(self, channel):
+        self.channel = channel
+
+    def read(self, bufsize):
+        try:
+            return self.channel.read(bufsize)
+        except AttributeError:
+            return self.channel.recv(bufsize)
+
+    def write(self, str_):
+        try:
+            self.channel.write(str_)
+        except AttributeError:
+            self.channel.sendall(str_)
+        return len(str_)
+
+def Es(msg):
+    hostname = socket.gethostname()
+    sys.stderr.write(hostname+': '+msg)
+
+def Ws(msg):
+    hostname = socket.gethostname()
+    sys.stdout.write(hostname+': '+msg)
+    sys.stdout.flush()
+
+def usage(status):
+    if int(os.environ['GXP_EXEC_IDX']) == 0:
+        msg = '''Usage: mw %s --ssh=A:B --socket=B:C --ssh=C:D A:filename D:
+       A --> B -----> C --> D
+         ssh   socket   ssh
+
+''' % os.split(sys.argv[0])[1]
+        Es(msg)
+        sys.exit(status)
+
+def ensure_file(filename):
+    if os.access(filename, os.F_OK) == 0:
+        Es("source file %s is missing!\n" % filename)
+        return 0
+    elif os.access(filename, os.R_OK) == 0:
+        Es("cannot read source file %s!\n" % filename)
+        return 0
+    return 1
+
+def ensure_oldfile(filename, time):
+    if os.access(filename, os.F_OK) == 0:
+        return 1
+    elif time > 0:
+        if os.path.getctime(filename) > time:
+            Es("file is newer than given time %s!\n" % filename)
+            return 0
+        else:
+            Es("file is older than given time %s!\n" % filename)
+    return 1
+
+def ensure_dir(directory):
+    if os.access(directory, os.F_OK) == 0:
+        try:
+            os.makedirs(directory)
+        except OSError:
+            if os.access(directory, os.F_OK) == 0:
+                raise
+    if os.access(directory, os.F_OK) == 0:
+        Es("destination directory %s is missing!\n" % directory)
+        return 0
+    elif os.access(directory, os.W_OK) == 0:
+        Es("cannot write to destination directory %s\n" % directory)
+        return 0
+    return 1
+
+def myTelnet(args):
+    r = os.fdopen(0, 'r')
+    w = os.fdopen(1, 'w')
+    if r.read(1) == 'a':
+        w.write('b')
+        w.close()
+    else:
+        sys.exit(2)
+    ip_addr, port = args
+    port = int(port)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.connect((ip_addr, port))
+    while 1:
+        piece = r.read(1024)
+        if piece == "":
+            break
+        sock.sendall(piece)
+        
+def parseOpt():
+    try:
+        opts, args = getopt.getopt(sys.argv[1:],
+                                   "h",
+                                   ["ssh=", "socket=", "help", "hidden-mode",
+                                    'time=', 'piece-size=', 'mode='])
+    except getopt.GetoptError:
+        usage(2)
+
+    edges = []
+    time = -1
+    pieceSize = 1024*1024
+    mode = None
+    for o, a in opts:
+        if o in ("-h", "--help"):
+            usage(0)
+        if o == "--hidden-mode":
+            myTelnet(args)
+            sys.exit(0)
+        if o == "--time":
+            time = int(a)
+        if o == "--piece-size":
+            pieceSize = int(a)
+        if o == "--mode":
+            mode = a
+        else:
+            try:
+                src, dst = a.split(':')
+            except ValueError:
+                Es('parse error: %s\n' % (o+'='+a))
+                usage(2)
+            edges.append((src, dst, o))
+
+    source, filename = args[0].split(':')
+    destination, directory = args[1].split(':')
+    directory = os.path.abspath(directory)
+
+    chain = [source]
+    for src,dst,method in edges:
+        if chain[-1] != src:
+            Es('parse error: please declare %s -> %s communication method\n' % (chain[-1], src))
+            usage(2)
+        chain.append(method)
+        chain.append(dst)
+    if chain[-1] != destination:
+        Es('parse error: please accord destination\n')
+        usage(2)
+
+    hostname = socket.gethostname()
+    if chain[0] == hostname and not ensure_file(filename):
+        return chain, None, None, time
+    if chain[-1] == hostname and not ensure_dir(os.path.dirname(directory)):
+        return chain, None, None, time
+    if chain[-1] == hostname and not ensure_oldfile(directory[:-5], time):
+        return chain, None, None, time
+    return chain, filename, directory, time, pieceSize, mode
+    
+
+def listen():
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(("", 0))
+    s.listen(5)
+    return s
+
+def announceAddr(hostname, addr, filename):
+    while True:
+        try:
+            import ifconfig
+        except (EOFError, ValueError):
+            pass
+        else:
+            break
+    w = os.fdopen(3, 'w')
+    ip_addr = ifconfig.ifconfig().get_my_addrs()[0]
+
+    w.write('%s\t%s\t%d\t%s\t%s\n'
+            % (hostname, (ip_addr, addr[1]),
+               filename == None, os.environ['GXP_DIR'], os.environ['USER']))
+    w.close()
+
+def getNextNodeAddr(nextNodeName):
+    n = int(os.environ['GXP_NUM_EXECS'])
+    r = os.fdopen(4, 'r')
+
+    lines = []
+    for i in range(n):
+        line = r.readline().strip().split('\t')
+        lines.append(line)
+        try: 
+            hostname, ip_addr, error, gxpDir, user = line
+        except ValueError:
+            break
+        if int(error):
+            Es('something wrong is occured in the other node\n')
+            sys.exit(2)
+        if hostname == nextNodeName:
+            return eval(ip_addr), gxpDir, user
+    return None, gxpDir, None
+
+def accept(listenSocket):
+    sock, addr = listenSocket.accept()
+    Es('connected from %s\n' % str(addr))
+    return sock
+
+def connect(nextNodeAddr):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.connect(nextNodeAddr)
+    except socket.error, e:
+        Es('connect() to %s error %s\n' % (nextNodeAddr, e))
+        sys.exit(2)
+    return sock
+
+def main():
+    chain, src, dst, time, pieceSize, mode = parseOpt()
+    filename = src
+    hostname = socket.gethostname()
+    listenSocket = listen()
+    announceAddr(hostname, listenSocket.getsockname(), filename)
+
+    try:
+        myIndex = chain.index(hostname)
+    except ValueError:
+        Es("I'm not in chain. exit.\n")
+        sys.exit(0)
+    else:
+        Es("I'm in chain.\n")
+    try:
+        nextNodeName = chain[myIndex+2]
+    except IndexError:
+        nextNodeName = None
+    else:
+        communicationMethod = chain[myIndex+1]
+
+    nextNodeAddr, nextNodeGxpDir, user = getNextNodeAddr(nextNodeName)
+    
+    if hostname == chain[0]:
+        fd = open(filename, 'r')
+        readChannel = Channel(fd)
+        Es("open file %s\n" % filename)
+    else:
+        readChannel = Channel(accept(listenSocket))
+    listenSocket.close()
+        
+    directory = os.path.dirname(dst)
+    dstfilename = os.path.basename(dst)
+    if hostname == chain[-1]:
+        fd = open(os.path.join(directory, dstfilename), 'w')
+        writeChannel = Channel(fd)
+        Es("open file %s\n" % os.path.join(directory, dstfilename))
+    else:
+        if communicationMethod == "--socket":
+            writeChannel = Channel(connect(nextNodeAddr))
+            Es('connect to %s\n' % nextNodeName)
+        elif communicationMethod == "--ssh":
+            cmd = "ssh %s@%s 'python %s/gxpbin/%s --hidden-mode localhost %d'" \
+                  % (user, nextNodeName, nextNodeGxpDir,
+                     sys.argv[0].split('/')[-1], nextNodeAddr[1])
+            i,o,e = os.popen3(cmd)
+            i.write('a')
+            i.flush()
+            ok = False
+            while True:
+                r,_,__ = select.select([o,e], [], [])
+                error = False
+                for fo in r:
+                    if fo == o:
+                        j = o.read(1)
+                        if 'b' == j:
+                            o.close()
+                            ok = True
+                            break
+                        elif j == '':
+                            error = True
+                            break
+                        else:
+                            raise RuntimeError, (e.read(), socket.gethostname(), filename)
+                    if fo == e:
+                        msg = e.read(1)
+                        Es(msg+'\n')
+                if ok or error:
+                    break
+            if error:
+                cmd = "ssh %s@%s 'python %s/gxpbin/%s --hidden-mode localhost %d'" \
+                      % (user, nextNodeAddr[0], nextNodeGxpDir,
+                         sys.argv[0].split('/')[-1], nextNodeAddr[1])
+                i,o,e = os.popen3(cmd)
+                i.write('a')
+                i.flush()
+                r,_,__ = select.select([o], [], [])
+                for fo in r:
+                    if fo == o:
+                        j = o.read(1)
+                        if 'b' == j:
+                            o.close()
+                            break
+                        else:
+                            raise RuntimeError
+                    if fo == e:
+                        msg = e.read()
+                        Es(msg)
+                        sys.exit(1)
+            writeChannel = Channel(i)
+            Es('connect to %s\n' % nextNodeName)
+        else:
+            raise RuntimeError, communicationMethod
+
+    header_temp = "HEADER len %20d HEADER_END"
+    header_len = len(header_temp % 0)
+    header_pat = re.compile("HEADER len +(\d+) HEADER_END")
+    if hostname == chain[0]:
+        body = readChannel.read(-1)
+        size = len(body)
+        writeChannel.write(header_temp % size)
+        writeChannel.write(body)
+    else:
+        header = readChannel.read(header_len)
+        if header == '':
+            Es('connection broken\n')
+            sys.exit(1)
+        Es('header = %s\n' % header)
+        mo = header_pat.match(header)
+        assert mo, header
+        size = int(mo.groups()[0])
+        total_sent = 0
+        if hostname != chain[-1]:
+            writeChannel.write(header)
+        while size - total_sent > 0:
+            piece = readChannel.read(size - total_sent)
+            if piece == "":
+                raise RuntimeError
+            total_sent += len(piece)
+            writeChannel.write(piece)
+    if hostname == chain[-1]:
+        Es('%d bytes write to %s.\n' % (size, dstfilename))
+        if mode:
+            os.chmod(os.path.join(directory, dstfilename), int(mode))
+            Es('chmod to %o\n' % int(mode))
+    Ws('ok\n')
+    return 0
+
+if __name__ == '__main__':
+    try:
+        main()
+    except RuntimeError, OSError:
+        Es('some thing wrong is occured\n')
+        sys.exit(1)
+    else:
+        sys.exit(0)

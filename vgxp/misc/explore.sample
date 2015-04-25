@@ -1,0 +1,14 @@
+#!/bin/bash
+
+export GXP_SESSION=`perl -MVGXP -e VGXP::gxp_env`
+SCRIPT_DIR=`dirname $0`
+
+TARGETFILE=$SCRIPT_DIR/targets2
+
+gxpc use --delete >/dev/null 2>&1
+
+gxpc use ssh h
+
+#VERBOSITY=--verbosity 2
+VERBOSITY=
+gxpc explore --timeout 500 $VERBOSITY -t $TARGETFILE $*

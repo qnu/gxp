@@ -1,0 +1,774 @@
+#!/usr/bin/env python
+import getopt
+import os
+import sys
+import stat
+import string
+import time
+import getopt
+import socket
+import re
+
+from sched_common import *
+
+#check_status = False
+check_status = True
+
+
+"""
+PROTOCOL:
+master -> worker:
+  master >> task_thread:
+    task idx require idx uri0 uri1; generate uri2; cmdline
+     (cmdline can contain variables $R0..$Rn, $W0..$Wn)
+    
+  master >> sender:
+    send idx to_addr uri
+   example:
+    send 10 123.4.56.7 111.11.1.10:/home/kay/hoge
+    send 10 123.4.56.7 111.11.1.10:$HOME/hoge
+ 
+  master >> receiver:
+    recv idx from_addr port uri
+   example:
+    recv 7 111.11.1.10 12345 111.11.1.10:/home/kay/hoge
+    ( If the address in uri does not match the receiver's address,
+      the file is copied to the tmpdir.
+     example:
+      /tmp/sched-kay/111_11_1_10-_home_kay_hoge
+
+      If the address in uri matches the receiver's address,
+      the file is copied to the exact place.
+     example:
+      /home/kay/hoge
+    )
+    
+worker -> master
+  task_thread >> master
+    worker idx addr hostname num_execs
+    avail idx
+    status task taskname exitcode elapsed hostname output
+    
+  sender >> master
+    cmd_transfer idx recv to_addr from_addr port uri
+    
+  receiver >> master
+    status rcvd exitcode from_addr to_addr uri bandwidth
+
+
+* The master maintains a map of hostname -> exec_idx
+
+
+TASKS:
+
+label: on host_regex; after task_label0, task_label1; \
+ require host:path0, host:path1; generate host:path2; \
+ hostcmd $R0 $R1 $W0
+(The three lines should be as one line)
+
+
+* Require files are transfered accordingly from hosts to tmpdir on each host
+
+Example: Assume the following command is executed on istbs023, and its tmpdir is /tmp/someplace/
+  t0: on .+; require istbs000:/data/hoge istbs001:/data/fuga;\
+             generate istbs002:/data/output; \
+             analyze $R0 $R1 $W0
+   ($R0 and $R1 are somehow analyzed and $W0 is output
+
+Files are Transfered like:
+  istbs000:/data/hoge -> istbs023:/tmp/someplace/133_11_23_131-_data_hoge
+  istbs001:/data/fuga -> istbs023:/tmp/someplace/133_11_23_132-_data_fuga
+
+Actual command is executed like this:
+  $ analyze /tmp/someplace/133_11_23_131-_data_hoge /tmp/someplace/133_11_23_132-_data_fuga \
+    /tmp/someplace/133_11_23_133-_data_output
+
+The result is copied like this:
+  istbs023:/tmp/someplace/133_11_23_133-_data_output -> istbs002:/data/output
+
+
+Communication between the master and workers is performed like this:
+master >> isbs000 (idx=0)
+  send 0 istbs023 /data/hoge t0
+
+master >> isbs001 (idx=1)
+  send 1 istbs023 /data/fuga t0
+
+master >> isbs023 (idx=23)
+  wait 23 $(tmpdir)_istbs000_data_hoge $(tmpdir)istbs001+_data_hoge
+  task 23 analyze $(tmpdir)_istbs000_data_hoge $(tmpdir)istbs001+_data_hoge
+  
+istbs000 >> master
+  cmd_transfer recv istbs023 istbs000 50000 istbs000+_data_hoge
+
+master >> istbs023
+  recv 23 istbs000 50000 istbs000+_data_hoge
+
+istbs001 >> master
+  cmd_transfer recv istbs023 istbs001 32768 istbs001+_data_fuga
+
+  master >> istbs023
+  recv 23 istbs001 32768 istbs001+_data_fuga
+
+
+istbs000 >> master 
+  status transfer done....
+...
+
+"""
+
+
+def read_task_file(fn, status_fn):
+    tmpdir_str = ""
+    tasks = Tasks(status_fn)
+    fp = open_for_read(fn)
+    i = 0
+    eof_flag = False
+    while not eof_flag:
+        line = ""
+        while True:
+            l = fp.readline()
+            i += 1
+            if l == "":
+                eof_flag = True
+                break #EOF
+            elif l.startswith("#"):
+                # Comment line
+                continue
+            line += l.strip()
+            if not line.endswith("\\"): break
+            
+        if line == "": continue
+        if line.startswith("tmpdir="):
+            tmpdir_str = line.split("tmpdir=")[1]
+            continue
+        task = Task(line)
+        if task.name == "":
+            Es("%s:%d skipped broken line (%s)\n" \
+              %(file, i, line))
+        else:
+            if debug >= 2:
+                Es("Loaded %s: on %s; after %s; %s\n"%(t.name, str(t.constraint_str), str(t.predecessors), str(t.reqs)))
+            tasks.append(task)
+                
+    fp.close()
+    Es("Loaded %d tasks\n"%(len(tasks.T)))
+    tmpdir = GxpPtn(tmpdir_str)
+    tmpdir.append("**", "/tmp")
+    tmpdir.append("**", "/tmp")
+    return tmpdir, tasks
+
+
+class Tasks:
+    """ Every task information is stored in Tasks::T"""
+    def __init__(self, status_file):
+        self.status = TaskStatus(status_file)
+        self.T = []
+        self.name_to_task = {}
+        self.skip_list = []
+        self.n_issued = 0
+        self.n_finished = 0
+        self.n_rest = 0
+
+        
+    def append(self, task):
+        if task.name in self.status.S and self.status.S[task.name]["status"] == 0:
+            if debug >= 1:
+                Es("Task <%s> has successfully performed in the previous run\n"%task.name)
+            return
+        self.T.append(task)
+        self.name_to_task[task.name] = task
+        self.n_rest += 1
+        
+        
+    def getStatus(self):
+        return "issued=%d, finished=%d,rest=%s"%(self.n_issued,self.n_finished,self.rest)
+    
+    
+    def showSummary(self):
+        Es("master : %d tasks executed in this run. %d tasks left.\n" \
+          %(self.n_finished, (len(self.T) - len(self.skip_list))))
+        n_ok = 0
+        n_ng = 0
+        for name,st in self.status.items():
+            if st["status"] == 0:
+                n_ok = n_ok + 1
+            else:
+                n_ng = n_ng + 1
+        Es("master : %d tasks succeeded, %d tasks failed, %d tasks remains\n" % (n_ok, n_ng, self.n_rest))
+
+
+    def printall(self):
+        Es("[ Print Tasks]\n")
+        for key in self.T:
+            Es("key : %s "%key)
+            Es(str(self.T[key]))
+        
+    
+    def getReadyTasks(self):
+        READY = 1
+        YET = 0
+        NEVER_READY = -1
+        
+        ready_tasks = []
+        for task in self.T:
+            if task in self.skip_list: continue
+            # check if all predecessors have finished
+            state = READY
+            
+            for p in task.predecessors: # p: prerequisute taskname
+                if not self.status.hasFinished(p):
+                    state = YET
+                    break
+                if not self.status.hasCleanlyFinished(p):
+                    state = NEVER_READY
+                    break
+            if state == READY:
+                ready_tasks.append(task)
+            elif state == NEVER_READY:
+                # this task may not have hosts to run it on
+                self.skip_list.append(task)
+                Es("Task %s has deleted, since its pre-requisite task has failed\n"%(task.name))
+        return ready_tasks
+
+
+    def setIssued(self,taskname):
+        self.skip_list.append(self.name_to_task[taskname])
+        self.n_issued += 1
+
+
+    def setFinished(self, msg):
+        taskname = self.status.write(msg)
+        if debug >= 2:
+            Es("master: task [%s] has finished\n"%(taskname))
+        self.n_finished += 1
+        
+
+class TaskStatus:
+    """
+       If there are multiple lines for one task, the last line is adopted.
+    
+    """ 
+    def __init__(self, fn):
+        self.fn = fn
+        self.S = {}
+        if check_status:
+            self.read()
+        self.fp = open_for_append(self.fn)
+
+    def close(self):
+        self.fp.close()
+    
+    def read(self):#OK
+        if os.path.exists(self.fn):
+            fp = open_for_read(self.fn)
+            i = 1
+            while True:
+                line = fp.readline()
+                if line == "": break
+                line = line.strip()
+                if line == "": continue
+                s = self.parse(line)
+                if s is None:
+                    Es("%s:%d skipped broken line (%s)\n" % (self.fn, i, line))
+                else:
+                    self.S[s["name"]] = s
+                i = i + 1
+            fp.close()
+
+    def hasFinished(self, taskname):
+        return taskname in self.S
+    
+    def hasCleanlyFinished(self, taskname):
+        return taskname in self.S and (self.S[taskname]["status"] == 0)
+
+    def items(self):
+        return self.S.items()
+        
+    def printall(self):
+        for s in self.items():
+            Es(str(s))
+
+
+    def parse(self, info):
+        """ Parse status line (name status elapsed_time exec_host output_file_prefix) """
+        fs = string.split(info, None, 5)
+        if len(fs) < 5:
+            return None
+        elif len(fs) == 5:
+            [ name, exit_code, elp_time, host, output_file ] = fs
+        else:
+            [ name, exit_code, elp_time, host, output_file, finish_time ] = fs
+        return { "name" : name,
+                 "status" : string.atoi(exit_code),
+                 "elapsed_time" : string.atof(elp_time),
+                 "exec_host" : host,
+                 "output_file_prefix" : output_file }
+
+    def write(self, info):
+        """
+        record that a task NAME has finished with status (and some other info) = val
+        """
+        # val_s is like
+        #   status elp_time host output_file
+        s = self.parse(info)
+        assert s is not None
+        name = s["name"]
+        self.S[name] = s
+        self.fp.write("%s %s\n" % (info, time.ctime()))
+        self.fp.flush()
+        return name
+
+
+
+class Communicator: #OK
+    def __init__(self):
+        self.from_worker = sys.stdin
+        self.to_worker = sys.stdout
+        
+
+    def read(self):
+        h = self.from_worker.readline()
+        if h == "":
+            Es("Master prematurely got EOF from a worker\n")
+            #return None
+        return h.strip()
+
+        
+    def issue(self, line):
+        if debug >= 2: Es("master : issued <%s>\n" % line)
+        self.to_worker.write(line + "\n")
+        self.to_worker.flush()
+
+    def close(self):
+        self.issue("")
+        self.to_worker.close()
+        self.from_worker.close()
+        Es("\n")
+
+
+
+class WorkerStatus:
+    def __init__(self):
+        self.recvcount = 0
+        self.sendcount = 0
+        self.taskcount = 0
+
+
+class Master:
+    def __init__(self, tasks_file, status_file, log_file, inactive_file, max_tasks):
+        self.tmpdir, self.tasks = read_task_file(tasks_file, status_file)
+        self.log = Log(log_file)
+        self.comm = Communicator()
+        self.inactive_hosts = read_inactive_hosts(inactive_file)
+        self.max_tasks = max_tasks
+
+        self.request_q = Queue.Queue(0)
+        self.n_workers = -1
+        
+        # vars
+        self.addr_to_idxs = {} # addr -> [exec_idx0, exec_idx1,...]
+        self.addr_to_name = {} # addr -> hostname
+        self.idx_to_addr  = {} # idx -> addr
+        self.worker_statuses = {} # idx -> status # new
+        
+        self.free_hosts = []
+        self.registered_workers = 0
+
+
+    def registerWorker(self, idx, addr, name):
+        # Register worker
+        if addr not in self.addr_to_idxs:
+            self.addr_to_idxs[addr] = []
+        for i,e in enumerate(self.addr_to_idxs[addr]):
+            if idx < e:
+                self.addr_to_idxs[addr].insert(i,idx)
+                break
+        else:
+            self.addr_to_idxs[addr].append(idx)
+        self.addr_to_name[addr] = name
+        self.idx_to_addr[idx] = addr
+        self.registered_workers += 1
+        assert idx not in self.worker_statuses
+        self.worker_statuses[idx] = WorkerStatus()
+        
+    
+    def readRequest(self):
+        msg = self.comm.read()
+        if msg == None:
+            Es("Master: Fatal error... worker(s) has died \n")
+            bomb()
+        if debug >= 2:
+            Es( "<msg=%s>\n"%msg)
+        A = string.split(msg, None, 1)
+        if len(A) != 2:
+            Es("master: receive invalid string from a worker(%s)\n"%(msg))
+            bomb()
+            
+        cmd,args = A
+        
+        if cmd == "worker":# The worker joined to the computation for the first time
+            # (worker) hostname exec_index
+            idx_s, addr, name, num_execs_s = string.split(args, None, 3)
+            idx = safe_atoi(idx_s)
+            num_execs = safe_atoi(num_execs_s)
+            if self.n_workers == -1:
+                self.n_workers = num_execs
+                
+            if idx == None:
+                Es("master: illegal index:%s\n"%idx_s)
+                Es("master: (received: <%s>\n"%msg)
+                sys.exit(1)
+            self.registerWorker(idx, addr, name)
+            self.free_hosts.append(idx)
+            self.comm.issue("registered %d %s" % (idx, self.tmpdir.get(name)))
+            
+            if debug >= 2:
+                Es("master: Registered (idx=%d, addr=%s, name=%s)\n"%(idx, addr,name))
+                Es("        %s["%(name))
+                for i in self.addr_to_idxs[addr]:
+                    Es("%d,"%(i))
+                Es("]\n")
+                
+        else:
+            self.request_q.put((cmd, args))
+        
+
+
+    def processRequest(self):
+        cmd, args = self.request_q.get()
+        if cmd not in [ "status", "cmd_transfer" ]:
+            Es("masrer: invalid command (%s)\n"%cmd)
+ 
+        if cmd == "status":
+            # (status) task_done idx (rest)
+            # (status) recv idx filename size elapsed
+            action,idx_s,rest = string.split(args, None, 2)
+            idx = safe_atoi(idx_s)
+            name = self.addr_to_name[self.idx_to_addr[idx]]
+            if action == "task":
+                # Update host status
+                # NOTE: If the worker has files to send back, the worker
+                # first send "cmd_transfer recv" message
+                assert self.worker_statuses[idx].taskcount == 1
+                self.worker_statuses[idx].taskcount -= 1
+                
+                # Update task status
+                self.tasks.setFinished(rest)
+
+                # Log it 
+                self.log.write("%s: finished %s\n" % (time.ctime(), args))
+
+                self.free_hosts.append(idx)
+                self.log.write("%s %s:%d available\n" % (time.ctime(), name, idx))
+                if debug >= 2:
+                    Es("master: host(idx=%d, host=%s) is available\n"%(idx,name))
+                self.schedule()
+
+            elif action == "send":
+                # Update host status
+                assert self.worker_statuses[idx].sendcount >= 1
+                self.worker_statuses[idx].sendcount -= 1
+                if debug >= 2:
+                    Es("DECREMENT SEND COUNT for %d to %d \n"%(idx, self.worker_statuses[idx].sendcount))
+
+            elif action == "send_start":
+                # Update host status
+                self.worker_statuses[idx].sendcount += 1
+                if debug >= 2:
+                    Es("DECREMENT SEND COUNT for %d to %d \n"%(idx, self.worker_statuses[idx].sendcount))
+
+            elif action == "recv":
+                # Update host status
+                assert self.worker_statuses[idx].recvcount >= 1
+                self.worker_statuses[idx].recvcount -= 1
+                if debug >= 2:
+                    Es("DECREMENT RECV COUNT for %d to %d \n"%(idx, self.worker_statuses[idx].recvcount))
+                # Update file location map if necessary
+                
+            elif action == "abort_recv":
+                # Update file location map if necessary
+                self.log.write("%s %s:%d abort_recv: %s\n" % (time.ctime(), name, idx, rest))
+                
+            else:
+                Es("master: Invalid status msg <%s>\n"%(args))
+                assert False
+
+
+        elif cmd == "cmd_transfer":
+            # RECV: cmd_transfer idx recv to_hostname from_hostname port filepath
+            #       cmd_transfer idx abort_recv to_hostname from_hostname filepath
+            # SEND: recv to_idx from_host args
+            #       abort to_idx transfer from_host args
+            # (cut the tag off, and convert hostname to idx)
+            [ idx_s, cmd, to_addr, rest ] = string.split(args, None, 3)
+            assert to_addr in self.addr_to_idxs #TODO: Better error treatment
+            idx = safe_atoi(idx_s)
+            if debug >= 2:
+                Es("master: cmd_transfer idx=%d, cmd=%s, to_addr=%s, rest=%s\n"%(idx,cmd,to_addr,rest))
+            to_idx = self.addr_to_idxs[to_addr][0]
+            if cmd == "recv":
+                self.comm.issue("%s %d %s" % (cmd, to_idx, rest))
+                self.worker_statuses[idx].sendcount += 1
+                self.worker_statuses[to_idx].recvcount += 1
+                
+            elif cmd == "abort_recv":
+                self.log.write("%s abort_send: %s"%(idx_s,rest)) #TODO
+                self.comm.issue("%s %d %s" % (cmd, to_idx, rest)) # To let the task abort
+                
+            else:
+                Es("Invalid message: %s"%(rest))
+                assert False
+            
+        else:
+            Es("Illegal command : %s"%cmd)
+            bomb()
+            
+
+        
+    def issue_task(self, idx, addr, task): #OK
+        self.log.write("%s issued %s(%d) %s\n" % (time.ctime(), addr, idx, task.name))
+        task_str = str(task)
+        self.comm.issue("task %d %s" % (idx, task_str))
+        # update worker status
+        self.worker_statuses[idx].taskcount += 1
+
+
+    def issue_transfers(self, dest_idx, dest_addr, files):
+        fns = []
+        for fileURI in files:
+            self.log.write("%s issued transfer from %s to %s\n" % (time.ctime(), fileURI, dest_addr))
+            src_addr,src_path= fileURI.split(":")
+            #Es("*** Src: %s, Dest : %s"%(src_addr, dest_addr))
+            if src_addr == dest_addr:
+                continue
+            if src_addr not in self.addr_to_idxs:
+                Es("Host %s is not in this execution, so cannot transfer the file %s\n"%(src_addr, src_path))
+                self.comm.issue("abort_recv %d %s %s" % (dest_idx, dest_addr, fileURI))
+                continue
+                
+            src_idx = self.addr_to_idxs[src_addr][0]
+            self.comm.issue("send %d %s %s" %(src_idx, dest_addr, fileURI))
+            # update worker status
+            assert src_idx != dest_idx
+            #self.worker_statuses[dest_idx].recvcount += 1
+
+
+            
+    def schedule(self):
+        if debug >= 2:
+            Es("SCHEDULE, free=%d\n"%(len(self.free_hosts)))
+        # Assign tasks to hosts (which is not in inactive_hosts)
+        # When max_tasks is set
+        if self.max_tasks is not None and self.tasks.n_issued >= self.max_tasks :
+            Es("More than %d tasks were scheduled, exitting\n"%self.max_tasks)
+            return False
+
+        ready_tasks = self.tasks.getReadyTasks()
+        if debug >= 2:
+            Es("master: start scheduling\n")
+            Es("master: ready_tasks=%d, ["%(len(ready_tasks)))
+            for taskname in ready_tasks:
+                Es("%s "% taskname)
+            Es("]\n")
+               
+            
+        left = []
+        if debug >= 2:
+            Es("master: free/all workers = %d/%d\n" %(len(self.free_hosts), self.registered_workers))
+            Es("master: free [")
+            for idx in self.free_hosts:
+                Es("%s(%d) "%(self.addr_to_name[self.idx_to_addr[idx]], idx))
+            Es("]\n")
+        for host_idx in self.free_hosts:
+            addr = self.idx_to_addr[host_idx]
+            hostname = self.addr_to_name[addr]
+            if not self.check_active(hostname):
+                left.append(host_idx)
+                if debug >= 2:
+                    Es("master: Omitted invalid host(%d) %s\n"%(host_idx, hostname))
+                continue
+            
+            for i,task in enumerate(ready_tasks):
+                if task is None: continue
+                #TODO: smart assignments of tasks
+                if task.constraint_regexp.match(hostname):
+                    Es("%s on %s...\n"%(task.name,hostname))
+                    if self.srcHostsAreReady(task.reqs):
+                        self.tasks.setIssued(task.name)
+                        ready_tasks[i] = None
+                        self.issue_transfers(host_idx, addr, task.reqs)
+                        self.issue_task(host_idx, addr, task)
+                        break
+                    else:
+                        Es("Data soruce host is not available for task %s\n"%(task.name))
+            else:
+                # no task found for the host
+                left.append(host_idx)
+                if debug >= 2:
+                    Es("No task found for %d:%s\n"%(host_idx,hostname))
+                #self.free_hosts = left
+        self.free_hosts = left
+
+
+    def srcHostsAreReady(self, files):
+        for f in files:
+            addr,_ = f.split(":")
+            if addr not in self.addr_to_idxs:
+                return False
+        return True
+
+
+    def check_active(self, hostname):
+        a = 1
+        for regexp,flag in self.inactive_hosts:
+            if regexp.match(hostname):
+                a = flag
+        return a
+
+
+    def showSummary(self):
+        self.tasks.showSummary()
+
+
+    def everyWorkerIsFree(self):
+        for idx in self.worker_statuses:
+            if debug >= 2:
+                Es("Worker %d: T%d S%d R%d\n"%(idx,
+                                 self.worker_statuses[idx].taskcount,
+                                 self.worker_statuses[idx].sendcount,
+                                 self.worker_statuses[idx].recvcount))
+        for idx in self.worker_statuses:
+            if self.worker_statuses[idx].taskcount  != 0:
+                return False
+            if self.worker_statuses[idx].sendcount  != 0:
+                return False
+            if self.worker_statuses[idx].recvcount  != 0:
+                return False
+            
+        return True
+
+
+    def run(self):# Main loop
+        self.log.write("%s bring up\n" % time.ctime())
+
+        t0 = time.time()
+        assigned = True
+        try:
+            self.readRequest()
+            while self.n_workers != self.registered_workers:
+                self.readRequest()
+
+            assert self.registered_workers != -1
+            #assertif self.registered_workers == 0:
+            
+            self.schedule()
+            while not self.everyWorkerIsFree():
+                self.readRequest()
+                self.processRequest()
+                if debug >= 2:
+                    Es("master: workers |free=%d, all=%d\n" %(len(self.free_hosts), self.registered_workers))
+                    Es("master: tasks   |%s\n"%(self.tasks.getStatus()))
+                                    
+        except IOError,e:
+            Es("%s"%str(e))
+        
+        self.comm.close()
+        self.log.close()
+        self.showSummary()
+    
+
+def read_inactive_hosts(inactive_file):
+    H = []
+    Es("Inactives : %s\n"%inactive_file)
+    if os.path.exists(inactive_file):
+        fp = open(inactive_file, "rb")
+        line_no = 1
+        while 1:
+            line = fp.readline()
+            if line == "": break
+            fields = string.split(string.strip(line))
+            if len(fields) == 2:
+                [ regexp,flag ] = fields
+            elif len(fields) == 1:
+                [ regexp ] = fields
+                flag = "0"              # omitted, means stop
+            elif len(fields) == 0:
+                continue            # skip w/o warning
+            else:
+                E("%s:%d: parse error %s\n" % \
+                  (inactive_file, line_no, line))
+                continue
+            try:
+                regexp = mk_host_regexp(regexp)
+                flag = string.atoi(flag)
+            except ValueError:
+                Es("master : parse error on inactive host file(%s)" % (file))
+                Es("master : line %s: (%s)" % (line_no, line))
+            H.append((regexp, flag))
+        fp.close()
+    return H
+
+
+
+def usage():
+    Es("usage : python %s tasks [OPTIONS]\n" % sys.argv[0])
+    Es("OPTIONS :\n")
+    Es("  --status : status file\n")
+    Es("  --log : issue log file\n")
+    Es("  --inactive  : inactive host file\n")
+    Es("  --max-tasks : max number of tasks to be executed\n")
+    os._exit(2)
+
+
+def parse_args(args):
+    try:
+        opts,args = getopt.getopt(args[1:], "",
+                                  [ "log=", "status=", "inactive=", "max-tasks="])
+    except getopt.GetoptError:
+        usage()
+    if len(args) != 1:
+        usage()
+    d = { "--log" : "log",
+          "--status" : "status", "--inactive" : "inactives" ,"--max-tasks" : "max-tasks"}
+    for o,a in opts:
+        d[o] = a
+    return args[0],d["--status"],d["--log"],d["--inactive"],safe_atoi(d["--max-tasks"])
+    
+
+def bomb():
+    sys.exit(1)
+
+
+def main():
+    tasks,status,log,inactive,max_tasks = parse_args(sys.argv)
+    ma = Master(tasks, status, log, inactive, max_tasks)
+    ma.run()
+    Es("Master exitting\n")
+
+
+def tasks_test(fn):
+    tmpdir,T,name_to_task = read_task_file(fn)
+    print tmpdir, T
+     #status = Status("status")
+     #tasks = Tasks("tasks", status)
+     #tasks.printall()
+     #ts = tasks.getReadyTasks()
+     #for k in ts:
+     #    print "k:%s{"%k,ts[k],"}"
+    
+
+# def status_test():
+#     status = Status("status")
+#     status.printall()
+#     #print status.hasFinished("22")
+#     status.write("t0 0 1.37 istbs000.i.u-tokyo.ac.jp_0 output/22")
+
+# #status_test()
+# #tasks_test()
+
+
+if __name__ == "__main__":
+    main()
+
+#tasks_test("task")

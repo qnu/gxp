@@ -1,0 +1,321 @@
+GXP version 3
+
+デモを参照( http://www.logos.ic.i.u-tokyo.ac.jp/~tau/priv/gxp3.html )
+
+[0] 旧版との主な違い
+
+(1) 通常のシェルから毎回起動するインタフェースになった．つまりGXP自身
+はpromptを出さない.  
+
+	GXP[1/2/3] % e hostname 
+
+のかわりに
+
+	bash% gxpc e hostname 
+
+とする．裏で gxpd というデーモンが別プロセスとして走っている．
+
+まいかい
+面倒?             => shellの aliasなどで対処する(video demo参照)
+[1/2/3] が見たい? => (video demo参照)
+
+最大のメリットその1はスクリプティングが自由に(shellで)できるようになったこ
+と．また，{{ }} みたいなGXP独自の記法も不要になった．
+
+	GXP[1/2/3] e {{ hostname }} sort
+
+のかわりに，
+
+	bash% gxpc e hostname | sort
+
+でよい．
+
+最大のメリットその2は，コマンドラインが固まることが事実上なくなったこ
+と．Ctrl-C で終了させることは(gxpcにバグがあろうが)常に可能．もちろん
+gxpd が固まることはありうるが，通常は gxpc を殺しても gxpd は生き続け
+ている．
+
+BUG: 現在 gxpc 自身の exit status はあてにならない．
+
+(2) GXPの，起動されたコマンドの標準入力をいきなり閉じるという仕様を撤廃．
+gxpcの標準入力が broadcast される．例:
+
+	bash% echo hello | gxpc e cat 
+
+は台数分だけ hello を表示
+
+(3) explore は，故障が多くても一撃で全部の生きているノードをツモること
+ができるようになった．desf をしながらexploreを複数回，みたいのは(基本
+的には)いらないはず
+
+(4) super mw 
+
+e コマンドに統合された mw 
+
+    gxpc e --updown 3:4 hoge ===>  hoge の file descriptor 3 への出力を，
+			      hoge の file descriptor 4 へ入力
+
+
+    gxpc mw hoge             ===> gxpc e --updown 3:4 hoge の略記
+
+
+
+    gxpc e --up 3 hoge       ===> hoge の file descriptor 3 への出力を，
+			          gxpc の file descriptor 3 へ入力
+	このままでは gxpc が3 を開いていないのでエラーになる．実際には，
+	
+    gxpc e --up 3 hoge 3>&1
+
+    gxpc e --down 3 hoge     ===> gxpc の file descriptor 3 への入力を,
+				hoge のfile descriptor 3 へ入力
+	このままでは gxpc が3 を開いていないのでエラーになる．実際には，
+
+    gxpc e --down 3 hoge 3< file とか
+
+※--updownにかわる，より良い名前募集中
+
+(5) line buffer モード
+
+    gxpc e --pty hoge 
+
+で，hogeの実行に擬似端末を割り当てる．効果としては， 
+	hoge のstdout/err が line buffer になる．
+	print のたびに stdout を flushしなくてよい
+
+(6) bomb 
+
+は組み込みではなくて e bomb で実行． bomb コマンドは gxp 下のutil/bomb
+にあり，自動的に pathに追加され，explore先へも自動配布される．
+(e which bomb で観察可能)
+
+そのほかにもいくつか有用な， utility が util 下に有る．ファイルコピー
+など．下記参照
+
+--------------------------------
+
+edges, explore 関係の文法が多少変わっているので要約．
+
+[1] edges/use
+
+従来の edges コマンドは， use という名前に変わった
+
+	gxpc use LOGIN_METHOD SRC_NAME_REGEXP [TARGET_NAME_REGEXP]
+
+例1
+	gxpc use ssh istbs000 istbs
+
+例2
+	gxpc use ssh istbs
+  これは，
+	gxpc use ssh istbs istbs
+  の省略形．
+
+例3
+        gxpc use ssh --as taue '.*' istbs000
+
+
+全体としては，SRC_NAME_REGEXP から TARGET_NAME_REGEXP へ LOGIN_METHOD
+(e.g., ssh) を使ってログインできるということを言っている．
+--as user は user名を付け加える．~/.ssh/config に書いてある場合は不要．
+
+- LOGIN_METHOD ログイン方法のことで，以下がある．
+   ssh, rsh, sh, qrsh, qrsh_host
+
+- SRC_NAME_REGEXP は ソースホスト名をマッチさせる正規表現
+
+- TARGET_NAME_REGEXP は ターゲット名(通常ホスト名)をマッチさせる
+  正規表現
+
+	gxpc use ssh istbs istbs
+
+は，ホスト名が istbs にマッチするホストは， istbs にマッチするホストに
+sshでログインできるということを言っている．
+
+[2] explore
+
+基本形
+	gxpc explore -h file target1 target2 ...
+
+どのホストにログインが試みられるかは以下のように決まる．
+
+(1) -h file で指定されたファイル (以下ホストファイル)を読んで，
+世の中にあるホストを知る．
+
+(2) 知っているホストの中で，指定された target1, target2, ... のどれか
+マッチしたものすべてにログインが試みられる．
+
+(3) ただし，すでに到達しているホストにはログインしない
+
+ホストファイルのフォーマットはホスト名が列挙されたもの．
+
+例: ホストファイル hosts の内容が，
+
+chiba-lucy
+hongo-lucy
+chiba000
+chiba001
+chiba002
+hongo000
+hongo001
+hongo002
+
+とする．
+
+	gxpc explore -h hosts chiba
+
+は，chiba-lucy, chiba000, chiba001, chiba002 へログインを試みる(すでに
+到達しているノードを除く．以下いちいち断らない)．
+
+	gxpc explore -h hosts chiba hongo
+
+は上記ファイル内のすべてのノードへログインを試みる．
+
+	gxpc explore -h hosts '.*-lucy'
+
+は，hongo-lucy, chiba-lucy へ試みる． 
+
+targetが一つも与えられなかったら，すべてにマッチする正規表現が与えられ
+たものとみなす．つまり，
+
+	gxpc explore -h hosts
+
+は上記のホストすべてに試みる．
+
+ホストファイルのフォーマットは，実は/etc/hosts 形式でよい．一行に，
+
+	123.456.78.9    abc.def.com    abc
+
+のように複数のフィールドが合った場合，それらはすべて同じノードの別名と
+みなされる(カラムには意味がない)．#で始まる行は無視され，各行で #以降
+は無視される．特に，ホストファイルを一つも指定しなかった場合(のみ)，
+-h /etc/hosts としたものとみなされる．すなわち，
+
+	gxpc explore chiba0
+
+と書けば /etc/hosts から正規表現 chiba0 にマッチするホストへログインが
+こころみられる．通常，/etc/hostsに書かれているのはクラスタ内のホストだ
+けなので，クラスタをまたがる場合は，ホストファイルを自分で用意せざるを
+得ない．
+
+現状以下のようなエイリアスを，(gxp_setupとかなんとかいう名前のファイル
+にでも)書いておき，
+
+	. gxp_setup
+
+とすれば結構快適な環境になる．
+
+--------------------------------
+付録 utility 
+
+gxp3/util
+
+下にある.
+
+(1) bomb : これまでの gxp bomb を gxpc e bomb で実行
+
+(2) psfind : 重いプロセスを見つけて表示．その他いろいろな条件でプロセ
+    スを表示(メモリを食っている，etc.)
+
+    psfind	   -> %CPU > 50 なプロセス
+    psfind hog	   -> 同上
+    psfind memhog  -> VSZ > 100000 (100MB)なプロセス
+    psfind pig     -> hog かつ memhog
+
+より一般的な形式
+
+    psfind 'pythonの式'
+
+ここで変数として，
+	
+    PID USER     PCPU PMEM     TIME   VSZ  RSS  MAJFL  MINFL PRI  NI COMMAND
+
+が使える．例:
+
+	psfind "C '>' 30"
+	psfind "VSZ '>' 500000"
+	psfind "PMEM '>' 50.0"
+
+残念なことにシェルが > を特殊文字だと思わないようにクオートしなくては
+いけない．
+
+(3) nodefind : いろいろな基準でノードを選択する	
+
+     gxpc e nodefind "l '<' 0.2"
+     gxpc smask
+
+ロードアベレージ 0.2 以下のノードを選択
+
+     gxpc e nodefind "free '>' 300000"
+     gxpc smask
+
+空きメモリ 300MB 以上のノードを選択
+
+     gxpc e nodefind 'match\(\"istbs0\", hostname\)'
+     gxpc smask
+
+ホスト名が istbs0 にマッチするものを選択
+
+     gxpc e nodefind idx == 0
+     gxpc smask
+
+GXP_EXEC_IDX が0のノードを選択．
+
+   詳しくは 
+
+     gxpc e nodefind --help
+
+
+(3) bcp : 簡易 ファイルbroadcast utility. 
+
+ファイルを一つのホストから多数のホストへいっせいにコピーする．
+
+usage:
+     gxpc mw bcp src dst
+
+srcを残りの全ノードに dstとしてコピー．詳しくは，
+
+     gxpc mw bcp
+
+としてヘルプを表示してください．
+
+3:4 で endpoint 交換をして，あとは一直線にプロセスをつなぐ．
+
+istbs で 50-80台程度に/tmp/ -> /tmp で100MBをコピーするのに 5秒程度だっ
+た．
+
+例: 
+
+istbs000.i.u-tokyo.ac.jp:util[51/51/88]% time gxpc mw bcp /tmp/10m
+
+
+BUGS: 
+ファイアウォールで一箇所でもblockされていたら後は知らない．
+
+--------------
+
+# usage:
+#
+# . this_file
+# 
+# in your shell
+
+alias use='gxpc use'
+alias explore='gxpc explore'
+alias e='gxpc e'
+alias mw='gxpc mw'
+alias smask='gxpc smask'
+alias savemask='gxpc savemask'
+alias rmask='gxpc rmask'
+alias gexport='gxpc export'
+alias gcd='gxpc cd'
+
+gxpc use ssh --as tau . hongo-lucy.logos.ic.i.u-tokyo.ac.jp
+gxpc use ssh --as tau . chiba-lucy.intrigger.nii.ac.jp
+gxpc use ssh --as tau . shepherd.logos.k.u-tokyo.ac.jp
+gxpc use ssh --as taue . istbs000.i.u-tokyo.ac.jp
+gxpc use ssh chiba
+gxpc use ssh hongo
+gxpc use ssh she
+gxpc use ssh istbs
+
+export PS1='\h:\W`cat /tmp/gxp-$USER/gxpsession-* 2>/dev/null | head -1 `% '

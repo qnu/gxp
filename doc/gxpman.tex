@@ -1,0 +1,2494 @@
+\input texinfo  @c -*-texinfo-*-
+
+@c see README for how to edit this file
+@c DO NOT EDIT gxpman.tex, but gxpman_src.tex
+@c
+@c (texinfo-insert-node-lines) will add @node to section/chapter
+@c C-c C-u C-e will complete their names.
+@c 
+@c C-c C-u C-e  (texinfo-every-node-update) ---> complete node names and links
+@c C-c C-u C-a  (texinfo-all-menus-update)  ---> update menu
+@c C-c C-u m    (texinfo-master-menu)       ---> make master menu
+
+@setfilename gxpman.info
+@settitle GXP3 User's Guide
+@iftex
+@setchapternewpage on
+@end iftex
+@comment %**end of header
+
+
+Copyright 2007 Kenjiro Taura (Read COPYRIGHT for detailed information.)
+
+
+@titlepage
+@title GXP3 User's Guide
+@subtitle January 2007
+@author Kenjiro Taura
+@author
+@author University of Tokyo
+@author 7-3-1 Hongo Bunkyo-ku Tokyo, 113-0033 Japan
+@page
+@vskip 0pt plus 1filll
+Copyright @copyright{} 2007 Kenjiro Taura
+@end titlepage
+
+@node Top, Getting Started, (dir), (dir)
+
+@ifhtml
+@c HTML <link rel="STYLESHEET" href="gxpman.css" type="text/css" />
+@c HTML <h1>GXP3 User Manual</h1>
+@end ifhtml
+
+@menu
+* Getting Started::             
+* Tutorial::                    
+* Using GXP make for Parallel Processing::  
+* GXP internals::               
+* Command Reference::           
+* Tools Reference::             
+* Troubleshooting::             
+* Environment Variables Reference::  
+* Key Stroke Reference::        
+
+@detailmenu
+ --- The Detailed Node Listing ---
+
+Getting Started
+
+* Prerequisites::               
+* Installation::                
+
+Tutorial
+
+* Testing Your Installation::   
+* Running commands via e command::  
+* Getting more hosts with use/explore commands::  
+* Introduction to SSH for GXP Users::  
+* Quick Reference of Frequently Used Commands::  
+
+Using GXP make for Parallel Processing
+
+* GXP make::                    
+
+GXP internals
+
+* Files::                       
+
+Command Reference
+
+* cd::                          
+* e::                           
+* ep::                          
+* explore::                     
+* export::                      
+* help::                        
+* i::                           
+* js::                          
+* log_level::                   
+* make2::                       
+* make::                        
+* makectl::                     
+* makeman::                     
+* mapred::                      
+* ping::                        
+* popmask::                     
+* pp::                          
+* prof_start::                  
+* smask::                       
+* quit::                        
+* reclaim::                     
+* restoremask::                 
+* rmask::                       
+* rsh::                         
+* set_max_buf_len::             
+* show_explore::                
+* showmasks::                   
+* stat::                        
+* trim::                        
+* use::                         
+* version::                     
+* vgxp::                        
+
+Key Stroke Reference
+
+* Indices::                     
+* Function Index::              
+* Variable Index::              
+* Data Type Index::             
+* Program Index::               
+* Concept Index::               
+
+Indices
+
+* Function Index::              
+* Variable Index::              
+* Data Type Index::             
+* Program Index::               
+* Concept Index::               
+
+@end detailmenu
+@end menu
+
+@node Getting Started, Tutorial, Top, Top
+@chapter Getting Started
+
+
+@menu
+* Prerequisites::               
+* Installation::                
+@end menu
+
+@node Prerequisites, Installation, Getting Started, Getting Started
+@section Prerequisites
+
+In order to play with GXP, you need
+@itemize
+@item a Unix platform
+@item Python interpreter
+@end itemize
+To do anything interesting with GXP, you should be able to remote
+login (e.g., via SSH, RSH, QSUB, etc.) computers you want to use.
+
+GXP has been developed on Linux and tested on Linux and FreeBSD.  It
+has been tested with Python 1.5.2, 2.2.2, 2.3.4, and 2.4.2.  There are
+high chances that it runs with later versions of Python.
+
+Python is a very popular programming language that is installed on
+most Linux platforms. For remote logins, it's very likely that it
+accepts SSH logins. Thus there are chances that the above prerequisits
+are already satisfied in your platform.
+
+@node Installation,  , Prerequisites, Getting Started
+@section Installation
+
+You can obtain the latest version (tarball) from sourceforge:
+@example
+    http://sourceforge.net/projects/gxp/
+@end example
+and then unpack the tarball by something like:
+@example
+    tar zxvf gxp3.xx.tar.bz2
+@end example
+The exact file name (and the directory name) depends on the current
+version of GXP. Perhaps you want to make a symlink @t{gxp3} to the
+directory you obtained, or directly rename the directory to @t{gxp3}.
+
+If you have cvs, you can use it to obtain the latest copy under development.
+@example
+cvs -d :pserver:anonymous@@gxp.cvs.sourceforge.net:/cvsroot/gxp co gxp3
+@end example
+
+Either way, you will have directory called @t{gxp3}. Since GXP and
+accompanying tools are all written in Python, you need no compilation.
+Instead, all you need to do is either to:
+
+@enumerate
+@item make a symlink from anywhere in your path to @t{gxp3/gxpc}. For example,
+@example
+ln -s /absolute/path/to/gxp3/gxpc /usr/local/bin/gxpc
+@end example
+or,
+
+@item add @t{gxp3} directory to your PATH environment variable. For example,
+add the following line in your @t{.bashrc}.
+@example
+export PATH=$PATH:/absolute/path/to/gxp3
+@end example
+@end enumerate
+
+In the former, it is important to make a symlink to, not a copy of,
+@t{gxpc}. Otherwise it fails to find accompanying files under @t{gxp3}
+directory.
+
+To test your installation, type @t{gxpc} to your shell prompt and see
+something like this.
+@example
+$ gxpc
+gxpc: no daemon found, create one
+/tmp/gxp-you/gxpsession-hongo019-you-2007-07-03-13-56-21-3561-19041263
+@end example
+
+@xref{Troubleshooting}, if you fail.
+
+
+@node Tutorial, Using GXP make for Parallel Processing, Getting Started, Top
+@chapter Tutorial
+
+@menu
+* Testing Your Installation::   
+* Running commands via e command::  
+* Getting more hosts with use/explore commands::  
+* Introduction to SSH for GXP Users::  
+* Quick Reference of Frequently Used Commands::  
+@end menu
+
+@node Testing Your Installation, Running commands via e command, Tutorial, Tutorial
+@section Testing Your Installation
+
+The most basic function of GXP is to run commands on many hosts. To
+this end, you first need to learn how to run commands and how to
+acquire those hosts.
+
+GXP is run from a regular shell prompt. For those who have used prior
+versions of GXP, this has been changed in this version.
+
+@node Running commands via e command, Getting more hosts with use/explore commands, Testing Your Installation, Tutorial
+@section Running commands via e command
+Given you put gxpc in your PATH in one way or another, type
+the following to your shell prompt.
+@example
+$ gxpc e whoami
+@end example
+In this manual, @t{$} means a shell prompt, and is not a part of the input.
+
+You will see something like the following.
+@example
+$ gxpc e whoami
+gxpc: no daemon found, create one
+tau
+$
+@end example
+
+The @t{gxpc e} command lets GXP run whatever follows it, which is, in
+this example, @t{whoami}.  As you can see in the first line, a GXP
+``daemon'' is brought up, which takes the request to run @t{whoami}.
+GXP daemon stays running background.  Thus, if you issue another gxpc
+@t{e} command again, you will see result immediately this time.
+@example
+$ gxpc e whoami
+tau
+$ gxpc e uname
+Linux
+$
+@end example
+
+The daemon stays running even if you exit the shell or even logout.
+If you exit or logout and then run your shell or login again, the
+daemon should be still running.
+
+@t{gxpc quit} is the command to terminate the daemon.
+@example
+$ gxpc quit
+$
+@end example
+Issueing gxpc @t{e} command again, the daemon will bring up again, of course.
+@example
+$ gxpc e uname
+gxpc: no daemon found, create one
+Linux
+@end example
+
+A primitive way to check if the daemon is running is @t{ps} command. 
+For example,
+@example
+$ ps w 
+  PID TTY      STAT   TIME COMMAND
+ 9273 pts/1    S      0:00 /bin/bash --noediting -i
+ 9446 pts/1    S      0:00 python /home/tau/proj/gxp3/gxpd.py --no_stdin --redirect_stdout --redirect_stderr
+ 9486 pts/1    R      0:00 ps w
+@end example
+@t{gxpd.py} is the daemon running for you.
+
+Or you can run @t{gxpc prompt} command. 
+If no daemon is running, it does not print anything.
+If a daemon is running, it
+prints a short string indicating its status. For example,
+@example
+$ gxpc prompt
+[1/1/1]
+@end example
+We will detail the meaning of these three numbers ([1/1/1]) later.
+For now, remember @t{gxpc prompt} command as a way to check if the
+daemon is running.
+
+In general, @t{e} command will run any shell command on @i{all hosts
+selected for execution.} In this example, you only have one host,
+which is the local host you issued @t{gxpc} command on, and that node
+is selected. @xref{Getting more hosts with use/explore commands},
+for how to have more hosts and how to select a set of hosts for
+execution.
+
+@node Getting more hosts with use/explore commands, Introduction to SSH for GXP Users, Running commands via e command, Tutorial
+@section Getting more hosts with use/explore commands
+
+With GXP, you will probably want to use many hosts in parallel.  You
+need to have a host you can remote-login. In this example, we assume
+you are originally on host @t{hongo000} and you have another host,
+@t{hongo001}, which you can remote-login from @t{hongo000} via
+SSH. Furthermore, we assume you can do so without typing password
+every time you login @t{hongo001}. 
+@xref{Introduction to SSH for GXP Users}, if you are not familiar with necessary
+SSH setup to do so. For those who already know it, 
+you need to have public/private
+key pairs and either (1) use @t{ssh-agent} and @t{ssh-add} (@t{eval
+`ssh-agent` && ssh-add}) and input the phassphrase to @t{ssh-add}, 
+so SSH does not ask you it again (recommended), or
+(2) set the encryption passphrase of the private key empty.
+Though the method (2) uses secure public-key protocol for
+authentication, when your account on the host storing the private key
+is compromised, the intruder may be able to access other hosts
+via the private key.
+
+Either way, you should have an environment
+where something like the following silently succeeds without
+your password/passphrase being asked by SSH client.
+@example
+$ ssh hongo001 hostname
+hongo001
+$
+@end example
+You may use remote-execution commands other than SSH, 
+including RSH, QRSH, and QSUB as well as the local shell
+(sh) to spawn multiple daemons on a single host. 
+You can customize exact command lines used or even add
+your own custom rsh-like command in the repertoire.
+??? Explore Settings for Various Environment, 
+for details.
+
+Once you have such an environment, try the following to acquire hongo001.
+@example
+$ gxpc use ssh hongo000 hongo001
+$ gxpc explore hongo001
+reached : hongo001
+$
+@end example
+
+The first line reads ``@t{gxpc} [can] @t{use} @t{ssh} [from]
+@t{hongo000} [to login] @t{hongo001}.'' The second line instructs GXP to
+go ahead and really login @t{hongo001}. If @t{hongo000} and @t{hongo001}
+share your home directory, this command will not take much longer than
+the regular SSH. After the explore command has finished, issue an
+@t{e} command again. This time, you will see the command being
+executed on the two hosts.
+@example
+$ gxpc e hostname
+hongo000
+hongo001
+$
+@end example
+
+@t{gxpc stat} command shows hosts (daemons) connected.
+@example
+$ gxpc e hostname
+hongo000
+hongo001
+$
+@end example
+
+
+If you want to grab a third host, say @t{hongo002}, try the following.
+@example
+$ gxpc use ssh hongo000 hongo002
+$ gxpc explore hongo002
+reached : hongo002
+$ gxpc e hostname
+hongo000
+hongo001
+hongo002
+@end example
+
+You could continue this way, issueing @t{use} command and then @t{explore}
+command to get a single host at a time, but this is obviously not so
+comfortable if you have hundred hosts, say @t{hongo000} -- @t{hongo099}.
+The first trick to learn is that, both the second and the third
+arguments to @t{use} command are actually @i{regular expressions} of
+hostnames. Therefore, the following single line:
+@example
+$ gxpc use ssh hongo000 hongo0
+@end example
+says that ``@t{gxpc} [can] @t{use} @t{ssh} [from any host matching]
+@t{hongo000} [to login any host matching] @t{hongo0}.''  Note that any
+host that begins with @t{hongo0} matches the regular expression
+@t{hongo0}.
+
+Second, explore command can take multiple hostnames in a single
+command. For example, after the above command, you may grab three 
+hosts with a single stroke by:
+@example
+$ gxpc explore hongo003 hongo004 hongo005
+reached : hongo003
+reached : hongo004
+reached : hongo005
+$
+@end example
+
+By default, GXP won't grab the same host multiple times, so issuing
+the following once again will have no effect.
+@example
+$ gxpc explore hongo001
+$
+@end example
+
+If you have many hosts, this is still painful. An even better way
+is to use a special notation @t{[[@i{xxx}-@i{yyy}]]}, which represents
+a set of numbers between @i{xxx} and @i{yyy} (inclusive). So, 
+@example
+$ gxpc explore hongo[[000-014]]
+$
+@end example
+is equivalent to 
+@example
+$ gxpc explore hongo000 hongo001 hongo002 ... hongo014
+$
+@end example
+If you wish to exclude some hosts from the range, use a notation
+@t{;}@i{nnn} or @t{;}@i{nnn}@t{-}@i{mmm}. For example,
+@example
+$ gxpc explore hongo[[000-014;007]]
+$
+@end example
+will explore hongo000 ... hongo014 except for hongo007.
+@example
+$ gxpc explore hongo[[000-014;003-006]]
+$
+@end example
+will explore hongo000 ... hongo014 except for hongo003-hongo006.
+
+Since GXP gracefully handles (ignores) dead or non-existent hosts, you
+normally do not have to exclude every single non-working hosts this
+way, but doing so is sometimes useful to make explore faster.
+
+Instead of typing hostnames in a command line, you may have a file
+that lists targets and give it to explore command by 
+@t{--targetfile} or the shorter @t{-t} option.
+Let's say you have a file like the following.
+@example
+$ cat my_targets
+hongo[[000-014]]
+kashiwa[[000-009]]
+edo[[000-012]]
+@end example
+Then
+@example
+$ gxpc explore @t{-t my_targets}
+@end example
+is equivalent to
+@example
+$ gxpc explore hongo[[000-014]] kashiwa[[000-009]] edo[[000-012]]
+@end example
+
+Now you reached 15 hosts in total. The @t{stat} command shows 
+hosts (daemons) connected.
+
+@example
+$ gxpc stat
+/tmp/gxp-tau/gxpsession-hongo000-tau-2007-01-27-23-15-04-29004-97439271
+hongo000 (= hongo000-tau-2007-01-27-23-15-04-29004)
+ hongo007 (= hongo007-tau-2007-01-27-23-16-30-24842)
+ hongo001 (= hongo001-tau-2007-01-27-23-16-27-1205)
+ hongo013 (= hongo013-tau-2007-01-27-23-48-28-20179)
+ hongo014 (= hongo014-tau-2007-01-27-23-48-14-11435)
+ hongo005 (= hongo005-tau-2007-01-27-23-16-30-9412)
+ hongo006 (= hongo006-tau-2007-01-27-23-16-28-24083)
+ hongo003 (= hongo003-tau-2007-01-27-23-16-29-16040)
+ hongo002 (= hongo002-tau-2007-01-27-23-16-28-22077)
+ hongo008 (= hongo008-tau-2007-01-27-23-48-12-4070)
+ hongo012 (= hongo012-tau-2007-01-27-23-48-14-32519)
+ hongo010 (= hongo010-tau-2007-01-27-23-48-14-12066)
+ hongo011 (= hongo011-tau-2007-01-27-23-48-15-15126)
+ hongo009 (= hongo009-tau-2007-01-27-23-48-13-21582)
+ hongo004 (= hongo004-tau-2007-01-27-23-16-31-8776)
+$
+@end example
+
+The first line shows the name of @i{a session file}, which is
+explained later (??).  Below
+@t{hongo000}, @t{hongo001}--@t{hongo014} are indented by a single space,
+which means @t{hongo000} issued logins to all these hosts. This
+happened because we have previously said
+@example
+$ gxpc use ssh hongo000 hongo0
+@end example
+indicating that (only) @t{hongo000} can login @t{hongo0}.
+
+You can alternatively say
+@example
+$ gxpc use ssh hongo0 hongo0
+@end example
+indicating gxpc can use @t{ssh} from @t{any} host matching @t{hongo0}
+to any host matching @t{hongo0}. This can be abbreviated to:
+@example
+$ gxpc use ssh hongo0
+@end example
+In this case, @t{gxpc} will try to reach these hosts in a more
+load-balanced fashion. To see this let's quit and 
+try it again from the beginning.
+
+@example
+$ gxpc quit
+$ gxpc use ssh hongo0
+gxpc: no daemon found, create one
+$ gxpc explore -h /etc/hosts hongo00 hongo01[0-4]
+reached : hongo003
+reached : hongo008
+reached : hongo001
+reached : hongo004
+reached : hongo002
+reached : hongo005
+reached : hongo007
+reached : hongo006
+reached : hongo009
+reached : hongo013
+reached : hongo010
+reached : hongo011
+reached : hongo012
+reached : hongo014
+$ gxpc stat
+/tmp/gxp-tau/gxpsession-hongo000-tau-2007-01-28-00-10-51-311-66768183
+hongo000 (= hongo000-tau-2007-01-28-00-10-51-311)
+ hongo006 (= hongo006-tau-2007-01-28-00-10-33-29696)
+ hongo005 (= hongo005-tau-2007-01-28-00-10-35-13470)
+ hongo003 (= hongo003-tau-2007-01-28-00-10-34-16875)
+ hongo002 (= hongo002-tau-2007-01-28-00-10-33-27494)
+ hongo004 (= hongo004-tau-2007-01-28-00-10-36-9479)
+ hongo009 (= hongo009-tau-2007-01-28-00-10-33-21614)
+ hongo008 (= hongo008-tau-2007-01-28-00-10-31-4102)
+  hongo011 (= hongo011-tau-2007-01-28-00-10-34-15158)
+  hongo012 (= hongo012-tau-2007-01-28-00-10-33-32551)
+  hongo010 (= hongo010-tau-2007-01-28-00-10-33-12098)
+  hongo013 (= hongo015-tau-2007-01-28-00-10-34-20211)
+  hongo014 (= hongo014-tau-2007-01-28-00-10-34-11467)
+ hongo007 (= hongo007-tau-2007-01-28-00-10-35-26002)
+ hongo001 (= hongo001-tau-2007-01-28-00-10-32-1979)
+@end example
+
+The indentations indicate that @t{hongo008} issued logins to
+@t{hongo010}--@t{hongo014}. @t{hongo000} issued logins to @t{hongo001}
+--@t{hongo009}. In general, GXP daemons will form a tree.  By default,
+a single node tries to keep the number of its children no more than
+nine.
+
+@node Introduction to SSH for GXP Users, Quick Reference of Frequently Used Commands, Getting more hosts with use/explore commands, Tutorial
+@section Introduction to SSH for GXP Users
+todo
+
+@node Quick Reference of Frequently Used Commands,  , Introduction to SSH for GXP Users, Tutorial
+@section Quick Reference of Frequently Used Commands
+
+@itemize
+@item 
+@example
+@t{gxpc prompt}
+@end example
+will show a succinct summary of gxp status.  It is strongly
+recommended to put `gxpc prompt 2> /dev/null` 
+(note for the backquotes, not regular
+quotes) as part of your shell prompt. For example, if you are a bash
+user, put the following into your .bashrc.
+@example
+export PS1='\h:\W`gxpc prompt 2> /dev/null`% '
+@end example
+Then you will always see the succinct summary in your shell prompt. e.g.,
+@example
+$ export PS1='\h:\W`gxpc prompt 2> /dev/null`% '
+$ gxpc
+hongo:tmp[1/1/1]% 
+@end example
+
+'2> /dev/null' is to make gxpc silently exit if should be there any
+error.
+
+@item 
+@example
+@t{gxpc use} @i{rsh-name} @i{src} @i{target}
+@end example
+tells gxp it can login
+from @i{src} to @i{target} via @i{rsh-name}. 
+
+@item
+@example
+@t{gxpc explore} @i{target} ...
+@end example
+attempts to login specified @i{target}'s by methods specified by @t{use} 
+commands.
+There is a convenient notation to represent a set of targets. e.g.,
+@example
+$ gxpc explore hongo[[000-012]]
+@end example
+is equivalent to
+@example
+$ gxpc explore hongo000 hongo001 hongo002 ... hongo012
+@end example
+
+@item 
+@example
+@t{gxpc e} @i{whatever}
+@end example
+will run a shell command @i{whatever} on 
+all selected hosts. e.g.,
+
+@item 
+@example
+@t{gxpc cd} @i{[directory]}
+@end example
+will change the current directory of all selected hosts. 
+
+@item 
+@example
+@t{gxpc export} @i{VAR=VAL}
+@end example
+will set the environment variable for seqsequent commands. 
+
+@item 
+@example
+@t{gxpc smask}
+@end example
+will select the hosts on which the last command succeeded
+for the execution targets of subsequent commands.
+
+@item 
+@example
+@t{gxpc rmask}
+@end example
+will reset the selected hosts to all hosts.
+
+@item 
+@example
+@t{gxpc savemask} @i{name}
+@end example
+is similar to smask, but it remembers the set of selected hosts
+for future reference (by @t{-m} option of @t{gxpc e} commands).
+
+@item 
+@example
+@t{gxpc e} -m @i{name} @i{whatever}
+@end example
+is similar to @t{gxpc e} @i{whatever}, but runs @i{whatever} on
+hosts that have been set by @i{name} by @t{gxpc savemask} @i{name}.
+
+@item 
+@example
+@t{gxpc -m} @i{name} @t{cd} @i{[directory]}
+@t{gxpc -m} @i{name} @t{export} @i{VAR=VAL}
+@t{gxpc -m} @i{name} @t{e} @i{whatever}
+@end example
+@t{-m} can actually be written immediately after @t{gxpc}.
+
+@item 
+@example
+@t{gxpc e} -h @i{hostname} @i{whatever}
+@end example
+is similar to @t{gxpc e} @i{whatever}, but runs @i{whatever} on
+hosts whose names match regular expression @i{hostname}. 
+
+@item 
+@example
+@t{gxpc e} -H @i{hostname} @i{whatever}
+@end example
+is similar to @t{gxpc e} @i{whatever}, but runs @i{whatever} on
+hosts whose names do not match regular expression @i{hostname}. 
+
+@item 
+@example
+@t{gxpc -h} @i{name} @t{cd} @i{[directory]}
+@t{gxpc -h} @i{name} @t{export} @i{VAR=VAL}
+@t{gxpc -h} @i{name} @t{e} @i{whatever}
+@t{gxpc -H} @i{name} @t{cd} @i{[directory]}
+@t{gxpc -H} @i{name} @t{export} @i{VAR=VAL}
+@t{gxpc -H} @i{name} @t{e} @i{whatever}
+@end example
+Both @t{-h} and @t{-H} can actually be written immediately after @t{gxpc}.
+
+@item
+@example
+alias e='gxpc e'
+alias smask='gxpc smask'
+...
+@end example
+Finally, it is recommended to put aliases to some frequently used
+commands into your shell startup files, so that you do not need to
+type 'gxpc' everytime.
+
+
+@end itemize
+
+
+
+@node Using GXP make for Parallel Processing, GXP internals, Tutorial, Top
+@chapter Using GXP make for Parallel Processing
+
+@menu
+* GXP make::                    
+@end menu
+
+@node GXP make,  , Using GXP make for Parallel Processing, Using GXP make for Parallel Processing
+@section GXP make
+
+@node GXP internals, Command Reference, Using GXP make for Parallel Processing, Top
+@chapter GXP internals
+
+@menu
+* Files::                       
+@end menu
+
+@node Files,  , GXP internals, GXP internals
+@section Files
+
+There are the following files in the toplevel directory.  This is a bit
+messy and I like to make it cleaner some day.
+
+@itemize
+@item 
+ioman.py : main event handler
+@item 
+gxpm.py : definition of messages among gxpc and gxpd
+@item 
+gxpd.py : GXP daemon main program
+@item 
+gxpc.py : gxpc command main program
+@item 
+expectd.py : implements explore command
+@item 
+inst_remote_stub.py : implements explore command
+@item 
+inst_remote.py : implements explore command
+@item 
+inst_local.py : implements explore command
+@item 
+opt.py : a small utility defining command line options
+@item 
+ifconfig.py : a small utility giving ifconfig-like function
+@item 
+this_file.py : a small utility giving path name of the program
+@item 
+gxp_js.py : implements js command
+@end itemize
+
+
+@node Command Reference, Tools Reference, GXP internals, Top
+@chapter Command Reference
+
+@menu
+* cd::                          
+* e::                           
+* ep::                          
+* explore::                     
+* export::                      
+* help::                        
+* i::                           
+* js::                          
+* log_level::                   
+* make2::                       
+* make::                        
+* makectl::                     
+* makeman::                     
+* mapred::                      
+* ping::                        
+* popmask::                     
+* pp::                          
+* prof_start::                  
+* smask::                       
+* quit::                        
+* reclaim::                     
+* restoremask::                 
+* rmask::                       
+* rsh::                         
+* set_max_buf_len::             
+* show_explore::                
+* showmasks::                   
+* stat::                        
+* trim::                        
+* use::                         
+* version::                     
+* vgxp::                        
+@end menu
+
+@node cd, e, Command Reference, Command Reference
+@section cd
+@vskip 5mm
+@b{Usage:}
+@example
+
+  @t{gxpc} @t{cd} [@var{OPTIONS} ...] @var{DIRECTORY}
+
+@end example
+@vskip 5mm
+
+@vskip 5mm
+@b{Description:}
+
+
+  Set current directory of the selected nodes to @var{DIRECTORY}.
+Subsequent commands will start at the specified directory.
+Options are the same as those of `@t{e}' command.
+
+@node e, ep, cd, Command Reference
+@section e, mw
+@vskip 5mm
+@b{Usage:}
+@example
+
+  @t{gxpc} @t{e}  [@var{OPTION} ...] @var{CMD}
+  @t{gxpc} @t{mw} [@var{OPTION} ...] @var{CMD}
+  @t{gxpc} @t{ep} [@var{OPTION} ...] @var{FILE}
+
+@end example
+@vskip 5mm
+
+@vskip 5mm
+@b{Description:}
+
+
+  Execute the command on the selected nodes.
+
+@vskip 5mm
+@b{Options: }
+@table @code
+(for @t{mw} only):
+@item   @t{--master} 'command'
+    equivalent to @t{e} @t{--updown} '3:4:command' ...
+  if @t{--master} is not given, it is equivalent to @t{e} @t{--updown} 3:4 ...
+
+@end table
+@vskip 5mm
+
+@vskip 5mm
+@b{Options: }
+@table @code
+(for @t{e}, @t{mw}, and @t{ep}):
+@item   @t{--withmask},@t{-m} @var{MASK}
+    execute on a set of nodes saved by @t{savemask} or @t{pushmask}
+@item   @t{--withhostmask},@t{-h} @var{HOSTMASK}
+    execute on a set of nodes whose hostnames match regexp @var{HOSTMASK}
+@item   @t{--withhostnegmask},-H @var{HOSTMASK}
+    execute on a set of nodes whose hostnames do not match regexp @var{HOSTMASK}
+@item   @t{--withgupidmask},-g @var{HOSTMASK}
+    execute on a set of nodes whose gupid (shown by @t{gxpc} @t{stat}) 
+    match regexp @var{HOSTMASK}
+@item   @t{--withgupidnegmask},-G @var{HOSTMASK}
+    execute on a set of nodes whose gupid (shown by @t{gxpc} @t{stat}) 
+    do not match regexp @var{HOSTMASK}
+@item   @t{--withtargetmask},@t{-t} @var{HOSTMASK}
+    execute on a set of nodes whose target name (shown by @t{gxpc} @t{stat}) 
+    match regexp @var{HOSTMASK}
+@item   @t{--withtargetnegmask},-T @var{HOSTMASK}
+    execute on a set of nodes whose target name (shown by @t{gxpc} @t{stat}) 
+    do not match regexp @var{HOSTMASK}
+@item   @t{--up} FD0[:@var{FD1}]
+    collect output from @var{FD0} of @var{CMD}, and output them to @var{FD1} of @t{gxpc}.
+    if :@var{FD1} is omitted, it is treated as if @var{FD1} == @var{FD0}
+@item   @t{--down} FD0[:@var{FD1}]
+    broadcast input to @var{FD0} of @t{gxpc} to @var{FD1} of @var{CMD}.
+    if :@var{FD1} is omitted, it is treated as if @var{FD1} == @var{FD0}
+@item   @t{--updown} @var{FD1}:FD2[:@var{MASTER}]
+    if :@var{MASTER} is omitted, collect output from @var{FD1} of @var{CMD},
+    and broadcast them to @var{FD2} of @var{CMD}.
+    if :@var{MASTER} is given, run @var{MASTER} on the local host, collect
+    output from @var{FD1} of @var{CMD}, feed them to stdin of the @var{MASTER}.
+    broadcast stdout of the @var{MASTER} to @var{FD1} of @var{CMD}.
+@item   @t{--pty}
+    assign pseudo tty for stdin/stdout/stderr of @var{CMD}
+@item   @t{--rlimit} rlimit_xxx:soft[:hard]
+    apply setrlimit(rlimit_xxx, soft, hard)
+
+@end table
+@vskip 5mm
+
+By default,
+
+@vskip 5mm
+@itemize
+
+@item  stdin of @t{gxpc} are broadcast to stdin of @var{CMD}
+@item  stdout of @var{CMD} are output to stdout of @t{gxpc}
+@item  stderr of @var{CMD} are output to stderr of @t{gxpc}
+
+@end itemize
+@vskip 5mm
+
+This is as if `@t{--down} 0 @t{--up} 1 @t{--up} 2' are specified.  In this
+case, stdout/stderr are block-buffered by default.  You may need
+to do setbuf in your program or flush stdout/err, to display
+@var{CMD}'s output without delay.  @t{--pty} overwrites this and turn them
+to line-buffered (by default).  both stdout/err of @var{CMD} now goto
+stdout of @t{gxpc} (they are merged).  @var{CMD}'s stdout/err should appear
+as soon as they are newlined.
+
+@vskip 5mm
+@b{See Also:}
+@example
+
+  @t{smask} @t{savemask} @t{pushmask} @t{rmask} @t{restoremask} @t{popmask}
+
+@end example
+@vskip 5mm
+
+@node ep, explore, e, Command Reference
+@section ep
+@vskip 5mm
+@b{Usage:}
+@example
+
+  @t{gxpc} @t{e}  [@var{OPTION} ...] @var{CMD}
+  @t{gxpc} @t{mw} [@var{OPTION} ...] @var{CMD}
+  @t{gxpc} @t{ep} [@var{OPTION} ...] @var{FILE}
+
+@end example
+@vskip 5mm
+
+@vskip 5mm
+@b{Description:}
+
+
+  Execute the command on the selected nodes.
+
+@vskip 5mm
+@b{Options: }
+@table @code
+(for @t{mw} only):
+@item   @t{--master} 'command'
+    equivalent to @t{e} @t{--updown} '3:4:command' ...
+  if @t{--master} is not given, it is equivalent to @t{e} @t{--updown} 3:4 ...
+
+@end table
+@vskip 5mm
+
+@vskip 5mm
+@b{Options: }
+@table @code
+(for @t{e}, @t{mw}, and @t{ep}):
+@item   @t{--withmask},@t{-m} @var{MASK}
+    execute on a set of nodes saved by @t{savemask} or @t{pushmask}
+@item   @t{--withhostmask},@t{-h} @var{HOSTMASK}
+    execute on a set of nodes whose hostnames match regexp @var{HOSTMASK}
+@item   @t{--withhostnegmask},-H @var{HOSTMASK}
+    execute on a set of nodes whose hostnames do not match regexp @var{HOSTMASK}
+@item   @t{--withgupidmask},-g @var{HOSTMASK}
+    execute on a set of nodes whose gupid (shown by @t{gxpc} @t{stat}) 
+    match regexp @var{HOSTMASK}
+@item   @t{--withgupidnegmask},-G @var{HOSTMASK}
+    execute on a set of nodes whose gupid (shown by @t{gxpc} @t{stat}) 
+    do not match regexp @var{HOSTMASK}
+@item   @t{--withtargetmask},@t{-t} @var{HOSTMASK}
+    execute on a set of nodes whose target name (shown by @t{gxpc} @t{stat}) 
+    match regexp @var{HOSTMASK}
+@item   @t{--withtargetnegmask},-T @var{HOSTMASK}
+    execute on a set of nodes whose target name (shown by @t{gxpc} @t{stat}) 
+    do not match regexp @var{HOSTMASK}
+@item   @t{--up} FD0[:@var{FD1}]
+    collect output from @var{FD0} of @var{CMD}, and output them to @var{FD1} of @t{gxpc}.
+    if :@var{FD1} is omitted, it is treated as if @var{FD1} == @var{FD0}
+@item   @t{--down} FD0[:@var{FD1}]
+    broadcast input to @var{FD0} of @t{gxpc} to @var{FD1} of @var{CMD}.
+    if :@var{FD1} is omitted, it is treated as if @var{FD1} == @var{FD0}
+@item   @t{--updown} @var{FD1}:FD2[:@var{MASTER}]
+    if :@var{MASTER} is omitted, collect output from @var{FD1} of @var{CMD},
+    and broadcast them to @var{FD2} of @var{CMD}.
+    if :@var{MASTER} is given, run @var{MASTER} on the local host, collect
+    output from @var{FD1} of @var{CMD}, feed them to stdin of the @var{MASTER}.
+    broadcast stdout of the @var{MASTER} to @var{FD1} of @var{CMD}.
+@item   @t{--pty}
+    assign pseudo tty for stdin/stdout/stderr of @var{CMD}
+@item   @t{--rlimit} rlimit_xxx:soft[:hard]
+    apply setrlimit(rlimit_xxx, soft, hard)
+
+@end table
+@vskip 5mm
+
+By default,
+
+@vskip 5mm
+@itemize
+
+@item  stdin of @t{gxpc} are broadcast to stdin of @var{CMD}
+@item  stdout of @var{CMD} are output to stdout of @t{gxpc}
+@item  stderr of @var{CMD} are output to stderr of @t{gxpc}
+
+@end itemize
+@vskip 5mm
+
+This is as if `@t{--down} 0 @t{--up} 1 @t{--up} 2' are specified.  In this
+case, stdout/stderr are block-buffered by default.  You may need
+to do setbuf in your program or flush stdout/err, to display
+@var{CMD}'s output without delay.  @t{--pty} overwrites this and turn them
+to line-buffered (by default).  both stdout/err of @var{CMD} now goto
+stdout of @t{gxpc} (they are merged).  @var{CMD}'s stdout/err should appear
+as soon as they are newlined.
+
+@vskip 5mm
+@b{See Also:}
+@example
+
+  @t{smask} @t{savemask} @t{pushmask} @t{rmask} @t{restoremask} @t{popmask}
+
+@end example
+@vskip 5mm
+
+@node explore, export, ep, Command Reference
+@section explore
+@vskip 5mm
+@b{Usage:}
+@example
+
+  @t{gxpc} @t{explore} [@var{OPTIONS}] @var{TARGET} @var{TARGET} ...
+
+@end example
+@vskip 5mm
+
+@vskip 5mm
+@b{Description:}
+
+
+  Login target hosts specified by @var{OPTIONS} and @var{TARGET}.
+
+@vskip 5mm
+@b{Options:}
+@table @code
+
+@item   @t{--dry}
+    dryrun. only show target hosts
+@item   @t{--hostfile},@t{-h} @var{HOSTS_FILE}
+    give known hosts by file
+@item   @t{--hostcmd} @var{HOSTS_CMD}
+    give known hosts by command output
+@item   @t{--targetfile},@t{-t} @var{TARGETS_FILE}
+    give target hosts by file
+@item   @t{--targetcmd} @var{TARGETS_CMD}
+    give target hosts by command output
+@item   @t{--timeout} @var{SECONDS}
+    specify the time to wait for a remote host's response
+    until gxp considers it dead
+@item   @t{--children_soft_limit} @var{N} (>= 2)
+    control the shape of the @t{explore} tree. if this value is @var{N}, @t{gxpc}
+    tries to keep the number of children of a single host no more than @var{N},
+    unless it is absolutely necessary to reach requested nodes.
+@item   @t{--children_hard_limit} @var{N}
+    control the shape of the @t{explore} tree. if this value is @var{N}, @t{gxpc}
+    keeps the number of children of a single host no more than @var{N}, in any event.
+@item   @t{--target_prefix} @var{PATH}
+    specify the directory in remote hosts in which gxp files are installed.
+    default is ~/.gxp_tmp, meaning a temporary directory like
+    ~/.gxp_tmp/RANDOM_NAME/gxp3 will be created and all files are installed
+    there. automatically created if it does not exist. @t{use} @t{e}.g., /tmp/YOUR_NAME
+    or something if you have ridicuously slow home directory.
+@item   @t{--verbosity} @var{N} (0 <= @var{N} <= 2)
+    set verbosity level (the larger the more verbose)
+@item   @t{--set_default}
+    if you set this option, options specified in this @t{explore} becomes the default.
+    for example, if you say @t{--timeout} 20.0 and @t{--set_default}, timeout is set to
+    20.0 in subsequent explores, even if you do not specify @t{--timeout}.
+@item   @t{--reset_default}
+    reset the default values set by @t{--set_default}.
+@item   @t{--show_settings}
+    show effective @t{explore} options, considering those given by command line and
+    those specified as default values.
+
+@end table
+@vskip 5mm
+
+Execution of an @t{explore} command will conceptually consist of the
+following three steps.
+
+(1) Known Hosts: Know names of existing hosts, either by
+@t{--hostfile}, @t{--hostcmd}, or a default rule. These are called
+'known hosts.' @t{-h} is an acronym of @t{--hostfile}.
+
+(2) Targets: Extract login targets from known hosts. They are
+extracted by regular expressions given either by @t{--targetfile},
+@t{--targetcmd}, or directly by command line arguments. @t{-t} is
+an acronym of @t{--targetfile}.
+
+(3) @t{gxpc} will attempt to login these targets according to the
+rules specified by `@t{use}' commands.
+
+Known hosts are specified by a file using @t{--hostfile} option, or
+by output of a command using @t{--hostcmd}. Formats of the two are
+common and very simple. In the simplest format, a single file
+contains a single hostname. For example,
+
+@vskip 5mm
+@example
+
+   hongo001
+   hongo002
+   hongo004
+   hongo005
+   hongo006
+   hongo007
+   hongo008
+
+@end example
+@vskip 5mm
+
+is a valid @var{HOSTS_FILE}. If you specify a command that outputs
+a list of files in the above format, the effect is the same
+as giving a file having the list by @t{--hostfile}. For example,
+
+@vskip 5mm
+@example
+
+  @t{--hostcmd} 'for @t{i} in `seq 1 8` ; do printf "%03d\n" $i ; done'
+
+@end example
+@vskip 5mm
+
+has the same effect as giving the above file to @t{--hostfile}.
+
+The format of a @var{HOSTS_FILE} is actually a so-called @t{/etc/hosts}
+format, each line of which may contain several aliases of the
+same host, as well as their @var{IP} address. @t{gxpc} simply regards them
+as aliases of a single host, wihtout giving any significance to
+which columns they are in. Anything after `#' on each line is a
+comment and ignored. Lines not containning any name, such as
+empty lines, are also ignored.  The above simple format is
+obviously a special case of this.
+
+It is sometimes convenient to specify @t{/etc/hosts} as an argument
+to @t{--hostfile} or to specify `ypcat hosts' as an argument to
+@t{--hostcmd}. As a matter of fact, if you do not specify any of
+@t{--hostfile}, @t{--hostcmd}, @t{--targetfile}, and @t{--targetcmd}, it is
+treated as if @t{--hostfile} @t{/etc/hosts} is given.
+
+Login targets are specified by a file using @t{--targetfile} option,
+@t{--targetcmd} option, or by directly listing targets in the command
+line. Format of them are common and only slightly different from
+@var{HOSTS_FILE}.  The format of the list of targets in the command
+line is as follows.
+
+@vskip 5mm
+@example
+
+   @var{TARGET_REGEXP} [@var{N}] @var{TARGET_REGEXP} [@var{N}] @var{TARGET_REGEXP} [@var{N}] ...
+
+@end example
+@vskip 5mm
+
+where @var{N} is an integer and @var{TARGET_REGEXP} is any string that cannot
+be parsed as an integer. That is, it is a list of regular
+expressions, each item of which may optionally be followed by an
+integer. The integer indicates how many logins should occur to
+the target matching @var{TARGET_REGEXP}. The following is a valid
+command line.
+
+@vskip 5mm
+@example
+
+  @t{gxpc} @t{explore} @t{-h} hosts_file hongo00
+
+@end example
+@vskip 5mm
+
+which says you want to target all hosts beginning with hongo00,
+among all hosts listed in hosts_file.  If, for example, you have
+specified by `@t{use}' command that the local host can login these
+hosts by ssh, you will reach hosts whose names begin with
+hongo00.  If you instead say
+
+@vskip 5mm
+@example
+
+  @t{gxpc} @t{explore} @t{-h} hosts_file hongo00 2
+
+@end example
+@vskip 5mm
+
+you will get two processes on each of these hosts.
+
+If you do not give any of @t{--targetfile}, @t{--targetcmd}, and command
+line targets, it is treated as if a regular expression mathing
+any string is given as the command line target. That is, all
+known hosts are targets.
+
+Format of targets_host is simply a list of lines each of which
+is like the list of arguments just explained above. Thus, the
+following is a valid @var{TARGETS_FILE}.
+
+@vskip 5mm
+@example
+
+  hongo00 2
+  chiba0
+  istbs
+  sheep
+
+@end example
+@vskip 5mm
+
+which says you want to get two processes on each host beginning
+with hongo00 and one process on each host beginning with chiba0,
+istbs, or sheep. Just to illustrate the syntax, the same thing
+can be alternatively written with different arrangement into
+lines.
+
+@vskip 5mm
+@example
+
+  hongo00 2 chiba0
+  istbs sheep
+
+@end example
+@vskip 5mm
+
+Similar to hosts_file, you may instead specify a command line
+producing the output conforming to the format of @var{TARGETS_FILE}.
+
+We have so far explained that target_regexp is matched against a
+pool of known hosts to generate the actual list of targets.
+There is an exception to this. If @var{TARGET_REGEXP} does not match
+any host in the pool of known hosts, it is treated as if the
+@var{TARGET_REGEXP} is itself a known host. Thus,
+
+@vskip 5mm
+@example
+
+  @t{gxpc} @t{explore} hongo000 hongo001
+
+@end example
+@vskip 5mm
+
+will login hongo000 and hongo001, because neither hosts_file nor
+hosts_cmd hosts are given so these expressions obviously won't
+match any known host. Using this rule, you may have a file that
+explicitly lists all hosts and solely @t{use} it to specify targets
+without using separate @var{HOSTS_FILE}. For example, if you have a
+long @var{TARGETS_FILE} called targets like:
+
+@vskip 5mm
+@example
+
+  abc000
+  abc001
+    ...
+  abc099
+  def000
+  def001
+    ...
+  def049
+  pqr000
+  pqr001
+    ...
+  pqr149
+
+@end example
+@vskip 5mm
+
+and say
+
+@vskip 5mm
+@example
+
+  @t{gxpc} @t{explore} @t{-t} targets
+
+@end example
+@vskip 5mm
+
+you say you want to get these 300 targets using whatever methods
+you specified by `@t{use}' commands.
+
+Unlike @var{HOSTS_FILE}, an empty line in @var{TARGETS_FILE} is treated as if
+it is the end of file. By inserting an empty line, you can easily
+let @t{gxpc} ignore the rest of the file. This rule is sometimes
+convenient when targeting a small number of hosts within a
+@var{TARGETS_FILE}.
+
+Here are some examples.
+
+1.
+
+@vskip 5mm
+@example
+
+  @t{gxpc} @t{explore} @t{-h} hosts_file chiba hongo
+
+@end example
+@vskip 5mm
+
+Hosts beginning with chiba or hongo in hosts_file 
+become the targets.
+
+2.
+
+@vskip 5mm
+@example
+
+  @t{gxpc} @t{explore} @t{-h} hosts_file @t{-t} targets_file
+
+@end example
+@vskip 5mm
+
+Hosts matching any regular expression in targets_file become
+the targets.
+
+3.
+
+@vskip 5mm
+@example
+
+  @t{gxpc} @t{explore} @t{-h} hosts_file
+
+@end example
+@vskip 5mm
+
+All hosts in hosts_file become the targets.  Equivalent to `@t{gxpc}
+@t{explore} @t{-h} hosts_file .'  (`.' is a regular expression mathing
+any non-empty string).
+
+4.
+
+@vskip 5mm
+@example
+
+  @t{gxpc} @t{explore} @t{-t} targets_file
+
+@end example
+@vskip 5mm
+
+All hosts in targetfile become the targets. This is simiar to the
+previous case, but the file format is different.  Note that in
+this case, strings in targets_file won't be matched against
+anything, so they should be literal target names.
+     
+5.
+
+@vskip 5mm
+@example
+
+  @t{gxpc} @t{explore} chiba000 chiba001 chiba002 chiba003
+
+@end example
+@vskip 5mm
+
+chiba000, chiba001, chiba002, and chiba003 become the targets.
+
+6.
+
+@vskip 5mm
+@example
+
+  @t{gxpc} @t{explore} chiba0
+
+@end example
+@vskip 5mm
+
+Equivalent to `@t{gxpc} @t{explore} @t{-h} @t{/etc/hosts} chiba0' which is hosts
+beginning with chiba0 in @t{/etc/hosts} become the targets. Useful
+when you @t{use} a single cluster and all necessary hosts are listed
+in that file.
+     
+7.
+
+@vskip 5mm
+@example
+
+  @t{gxpc} @t{explore}
+
+@end example
+@vskip 5mm
+
+Equivalent to `@t{gxpc} @t{explore} @t{-h} @t{/etc/hosts}' which is in turn
+equivalent to `@t{gxpc} @t{explore} @t{-h} @t{/etc/hosts} .'  That is, all hosts
+in @t{/etc/hosts} become the targets.  This will be rarely useful
+because @t{/etc/hosts} typically includes hosts you don't want to
+@t{use}.
+
+@node export, help, explore, Command Reference
+@section export
+@vskip 5mm
+@b{Usage:}
+@example
+
+  @t{gxpc} @t{export} @var{VAR}=@var{VAL}
+
+@end example
+@vskip 5mm
+
+@vskip 5mm
+@b{Description:}
+
+
+  Set environment variable @var{VAR} to @var{VAL} on the selected nodes.
+Options are the same as those of `@t{e}' command.
+
+@node help, i, export, Command Reference
+@section help
+@vskip 5mm
+@b{Usage:}
+@example
+
+  @t{gxpc} @t{help}
+  @t{gxpc} @t{help} @var{COMMAND}
+
+@end example
+@vskip 5mm
+
+@vskip 5mm
+@b{Description:}
+
+
+  Show summary of @t{gxpc} commands or a @t{help} on a specific @var{COMMAND}.
+
+@node i, js, help, Command Reference
+@section i
+@vskip 5mm
+@b{Usage:}
+@example
+
+  @t{gxpc} @t{i}
+
+@end example
+@vskip 5mm
+
+@vskip 5mm
+@b{Description:}
+
+
+  Enter a new shell with a @t{gxpc} session.
+
+@node js, log_level, i, Command Reference
+@section js
+@vskip 5mm
+@b{Usage:}
+@example
+
+  @t{gxpc} @t{js} [@var{OPTION} ...]
+
+@end example
+@vskip 5mm
+
+@node log_level, make2, js, Command Reference
+@section log_level, log_base_time
+@vskip 5mm
+@b{Usage:}
+@example
+
+  @t{gxpc} @t{log_level} @var{LEVEL}
+  @t{gxpc} @t{log_base_time}
+
+@end example
+@vskip 5mm
+
+@vskip 5mm
+@b{Description:}
+
+
+  Command @t{log_level} will set the log level of the selected nodes
+to the specified @var{LEVEL}.  0 will write no logs. 2 will write many.
+Command @t{log_base_time} will reset the time of the selected nodes
+to zero.  Subsequent log entries will record the time relative to
+this time.
+
+@node make2, make, log_level, Command Reference
+@section make2
+@vskip 5mm
+@b{Usage:}
+@example
+
+  @t{gxpc} @t{make2} [@var{OPTION} ...]
+
+@end example
+@vskip 5mm
+
+@node make, makectl, make2, Command Reference
+@section make
+@vskip 5mm
+@b{Usage:}
+@example
+
+  @t{gxpc} @t{make} GNU-MAKE-ARGS [ -- GXPC-MAKE-ARGS ]
+
+@end example
+@vskip 5mm
+
+@vskip 5mm
+@b{Description:}
+
+
+  Parallel and distributed @t{make}.
+
+@vskip 5mm
+@b{Options:}
+@table @code
+
+
+@end table
+@vskip 5mm
+
+@node makectl, makeman, make, Command Reference
+@section makectl
+@vskip 5mm
+@b{Usage:}
+@example
+
+  @t{gxpc} @t{makectl} (leave|leave_now|join)
+
+@end example
+@vskip 5mm
+
+@vskip 5mm
+@b{Description:}
+
+
+  @var{GXP} daemons who receive this command will leave, leave immediately,
+or join the gxp @t{make} computation.
+@vskip 5mm
+@b{Options:}
+@table @code
+
+
+@end table
+@vskip 5mm
+
+@node makeman, mapred, makectl, Command Reference
+@section makeman
+@vskip 5mm
+@b{Usage:}
+@example
+
+  @t{gxpc} @t{makeman}
+
+@end example
+@vskip 5mm
+
+@vskip 5mm
+@b{Description:}
+
+
+  Generate command reference chapter of gxp manual.
+
+@node mapred, ping, makeman, Command Reference
+@section mapred
+@vskip 5mm
+@b{Usage:}
+@example
+
+  @t{gxpc} @t{mapred} GNU-MAKE-ARGS [ -- GXPC-MAKE-ARGS ]
+
+@end example
+@vskip 5mm
+
+@vskip 5mm
+@b{Description:}
+
+
+  This is a map-reduce framework built on top of @var{GXP} @t{make}.
+You can run map-reduce without writing any Makefile by yourself.
+You specify various options in GNU-MAKE-ARGS in the form of 
+var=val.  @var{A} simple example:
+
+@vskip 5mm
+@example
+
+  @t{gxpc} @t{mapred} -j input=big.txt output=out.txt \
+    mapper=./my_mapper reducer=./my_reducer
+
+@end example
+@vskip 5mm
+
+You will find the '-n' option of @t{make} useful, since it tells you
+which commands are going to be executed by this command line.
+
+@vskip 5mm
+@example
+
+  @t{gxpc} @t{mapred} -n input=big.txt output=out.txt \
+    mapper=./my_mapper reducer=./my_reducer
+
+@end example
+@vskip 5mm
+
+@vskip 5mm
+@b{Options:}
+@table @code
+
+You will probably want to specify at least the following.
+  input=<input filename>     (default: "input")
+  output=<output filename>   (default: "output")
+  mapper=<mapper command>    (default: "ex_word_count_mapper")
+  reducer=<reducer command>  (default: "ex_word_count_reducer")
+
+@end table
+@vskip 5mm
+
+<input filename> and <output filename> are filenames.
+<mapper command> is a command that reads anything from stdin and 
+writes key-value pairs.
+<reducer command> is a command that reads key-value pairs from stdin 
+in sorted order and writes arbitrary final outputs.
+
+You will frequently want to specify the following.
+  n_mappers=<number of map tasks>       (default: 4)
+  n_reducers=<number of reduce tasks>   (default: 2)
+  reader=<reader command>               (default: "ex_line_reader")
+  int_dir=<intermediate directory>      (default: "int_dir")
+  keep_intermediates=y  will keep all intermediate files in int_dir
+  small_step=y  will execute the entire computation in small steps
+  dbg=y   equivalent to keep_intermediates=y small_step=y (useful for debugging)
+
+More options are:
+  partitioner=<partitioner command>  (default: "ex_partitioner")
+  pre_reduce_sorter=<sort command>   (default: "sort")
+  final_merger=<merge command>       (default: "cat")
+
+pre_reduce_sorter is a command that runs before each reducer.
+It takes in the command line mappers' output filenames and should
+output to the stdout the sorted list of key-value pairs.
+final_merger takes the filenames of all the reducers' output and
+outputs the final result.
+
+
+@node ping, popmask, mapred, Command Reference
+@section ping
+@vskip 5mm
+@b{Usage:}
+@example
+
+  @t{gxpc} @t{ping} [@var{LEVEL}]
+
+@end example
+@vskip 5mm
+
+@vskip 5mm
+@b{Description:}
+
+
+  Send a small message to the selected nodes and show some
+information. The parameter @var{LEVEL} is 0 or 1. Default is 0.
+This is useful to know the name and basic information about
+all or some nodes. It is also useful to check the status (liveness)
+of nodes and @t{trim} non-responding nodes.
+
+@vskip 5mm
+@b{See Also:}
+@example
+
+  @t{trim} @t{smask}
+
+@end example
+@vskip 5mm
+
+@node popmask, pp, ping, Command Reference
+@section popmask
+@vskip 5mm
+@b{Usage:}
+@example
+
+  @t{gxpc} @t{popmask}
+
+@end example
+@vskip 5mm
+
+@vskip 5mm
+@b{Description:}
+
+
+  Pop the set of nodes on the top of the stack. The next entry
+that is used to be referred to by name `1' will now be the top
+of the stack, and thus become the default set of nodes selected
+for execution.
+
+@vskip 5mm
+@b{See Also:}
+@example
+
+  @t{pushmask}
+
+@end example
+@vskip 5mm
+
+@node pp, prof_start, popmask, Command Reference
+@section pp
+@vskip 5mm
+@b{Usage:}
+@example
+
+  @t{gxpc} @t{pp} GNU-MAKE-ARGS [ -- GXPC-MAKE-ARGS ]
+
+@end example
+@vskip 5mm
+
+@vskip 5mm
+@b{Description:}
+
+
+  This is a simple parameter parallel framework built on top of @var{GXP} @t{make}.
+You can run a simple parameter-sweep type parallel applications without 
+writing any Makefile by yourself.  You specify various options in GNU-MAKE-ARGS 
+in the form of var=val.  @var{A} simple example:
+
+@vskip 5mm
+@example
+
+  @t{gxpc} @t{pp} -j cmd='./my_cmd -a $(a) $(f) ' a="1 2 3 4" f="a.txt b.txt c.txt" @t{parameters}="a f"
+
+@end example
+@vskip 5mm
+
+This will execute "./my_cmd -a $(a) $(f)" for all the 4x3=12 combinations
+of a and f. @t{parameters}= is mandatory.  For all names listed in @t{parameters},
+you need to specify at least one value.  You will find the '-n' option of 
+@t{make} useful, since it tells you which commands are going to be executed by 
+this command line.
+
+@vskip 5mm
+@example
+
+  @t{gxpc} @t{pp} -n cmd='./my_cmd -a $(a) $(f) ' a="1 2 3" f="a.txt b.txt c.txt"
+
+@end example
+@vskip 5mm
+
+
+@node prof_start, smask, pp, Command Reference
+@section prof_start, prof_stop
+@vskip 5mm
+@b{Usage:}
+@example
+
+  @t{gxpc} @t{prof_start} @var{FILENAME}
+  @t{gxpc} @t{prof_stop}
+
+@end example
+@vskip 5mm
+
+@vskip 5mm
+@b{Description:}
+
+
+  Start/stop profiling of the selected nodes. Stats are saved to
+the @var{FILENAME}.
+
+@node smask, quit, prof_start, Command Reference
+@section smask, savemask, pushmask
+@vskip 5mm
+@b{Usage:}
+@example
+
+  @t{gxpc} @t{smask}    [-]
+  @t{gxpc} @t{savemask} [-] @var{NAME}
+  @t{gxpc} @t{pushmask} [-]
+  @t{e}.g.,
+  @t{gxpc}  @t{e}  'uname | grep Linux'
+  @t{gxpc}  @t{smask}
+
+@end example
+@vskip 5mm
+
+@vskip 5mm
+@b{Description:}
+
+
+  All three commands have a common effect. That is to modify the
+set of nodes that will execute subsequent commands.  When `-'
+argument is not given, nodes that executed the last command and
+succeeded are selected. With argument `-', nodes that executed
+the last command and failed are set. The definition of sucess or
+failure depends on commands, but in the case of `@t{e}' command, a
+node is considered to succeed if the command exits with status
+zero.
+
+These commands can be used to efficiently choose the nodes
+to execute subsequent commands by various criterion.
+
+@vskip 5mm
+@b{Examples:}
+@example
+
+
+@end example
+@vskip 5mm
+
+1.
+
+@vskip 5mm
+@example
+
+  @t{gxpc}  @t{e}  'uname | grep Linux'
+  @t{gxpc}  @t{smask}
+
+@end example
+@vskip 5mm
+
+This will set the execution mask of Linux nodes.
+
+2.
+
+@vskip 5mm
+@example
+
+  @t{gxpc}  @t{e}  'which apt-get'
+  @t{gxpc}  @t{smask}  -
+  @t{gxpc}  @t{e}  hostname
+
+@end example
+@vskip 5mm
+
+This will set the execution mask of nodes that do not have apt-get
+command, and the last command will show their hostnames.
+
+To see the effect of these commands, it is advised to include the
+gxp3 directory in your @var{PATH}, and add something like the following
+in your shell (bash) prompt, which will show the number of nodes
+that succeeded the last command, the number of nodes that is
+currently selected, and the number all nodes.
+
+@vskip 5mm
+@example
+
+  @t{export} @var{PS1}='\h:\W`which gxp_prompt 1> /dev/null && gxp_prompt`% '
+
+@end example
+@vskip 5mm
+
+With this, you can see the effect of these commands in shell
+prompt.
+
+@vskip 5mm
+@example
+
+  [66/66/66]% @t{e} 'uname | grep Linux'
+  Linux
+  Linux
+  Linux
+  Linux
+  Linux
+  Linux
+  Linux
+  Linux
+  Linux
+  Linux
+  [10/66/66]% @t{gxpc} @t{smask}
+  [10/10/66]% 
+
+@end example
+@vskip 5mm
+
+In addition to setting the execution mask, @t{savemask} saves the set
+of selected nodes with the specified name. Sets of nodes hereby
+saved can be later used for execution by giving @t{--withmask} (@t{-m})
+option. This is useful when your work needs several, typical set
+of nodes to execute commands on. For example, you may save a
+small number of nodes for test, all gateway nodes to compile
+programs, all nodes within a particular cluster, and really all
+nodes.
+
+Command @t{pushmask} is similar to @t{savemask}, but the set is saved
+onto a stack. The newly selected set of nodes are on the top of
+the stack and named `0'.  Previously selected nodes are named by
+the distance from the top.
+
+@vskip 5mm
+@b{See Also:}
+@example
+
+  @t{showmasks} @t{rmask} @t{restoremask} @t{popmask}
+
+@end example
+@vskip 5mm
+
+@node quit, reclaim, smask, Command Reference
+@section quit
+@vskip 5mm
+@b{Usage:}
+@example
+
+  @t{gxpc} @t{quit} [@t{--session_only}]
+
+@end example
+@vskip 5mm
+
+@vskip 5mm
+@b{Description:}
+
+
+  Quit gxp session. By default, all daemons will exit.
+If @t{--session_only} is given, daemons keep running and only the 
+session will cease.
+
+@node reclaim, restoremask, quit, Command Reference
+@section reclaim
+@vskip 5mm
+@b{Usage:}
+@example
+
+  @t{gxpc} @t{reclaim} tid
+
+@end example
+@vskip 5mm
+
+@vskip 5mm
+@b{Description:}
+
+
+  Command @t{reclaim} will @t{reclaim} task tid unconditionally.
+
+@node restoremask, rmask, reclaim, Command Reference
+@section restoremask
+@vskip 5mm
+@b{Usage:}
+@example
+
+  @t{gxpc} @t{restoremask} @var{NAME}
+
+@end example
+@vskip 5mm
+
+@node rmask, rsh, restoremask, Command Reference
+@section rmask
+@vskip 5mm
+@b{Usage:}
+@example
+
+  @t{gxpc} @t{rmask}
+
+@end example
+@vskip 5mm
+
+@vskip 5mm
+@b{Description:}
+
+
+  Reset execution mask. Let all nodes execute subsequent commands.
+
+@vskip 5mm
+@b{See Also:}
+@example
+
+  @t{showmasks} @t{smask} @t{savemask} @t{restoremask} @t{pushmask} @t{popmask}
+
+@end example
+@vskip 5mm
+
+@node rsh, set_max_buf_len, rmask, Command Reference
+@section rsh
+@vskip 5mm
+@b{Usage:}
+@example
+
+  @t{gxpc} @t{rsh} [@var{OPTIONS}]
+  @t{gxpc} @t{rsh} [@var{OPTIONS}] rsh_name
+  @t{gxpc} @t{rsh} [@var{OPTIONS}] rsh_name rsh_like_command_template
+
+@end example
+@vskip 5mm
+
+@vskip 5mm
+@b{Description:}
+
+
+  Show, add, or modify rsh-like command explore/use will recognize
+  to the repertoire.
+  'gxpc @t{rsh}' lists all configured rsh-like commands.
+  'gxpc @t{rsh} rsh_name' shows the specified rsh-like command.
+  'gxpc @t{rsh} rsh_name rsh_like_command_template' adds or modifies (if exist)
+  the specified rsh-like command to @t{use} rsh_like_command_template.
+
+@vskip 5mm
+@example
+
+  The rsh_name is used as the first parameter of 'use' command (@t{e}.g.,
+  'gxpc @t{use} ssh src target' or 'gxpc @t{use} @t{rsh} <src> <target>').
+
+@end example
+@vskip 5mm
+
+  By default, the following rsh-like commands are builtin.
+
+@vskip 5mm
+@example
+
+  ssh, ssh_as, @t{rsh}, rsh_as, sh, sge, torque, and pbs.
+
+@end example
+@vskip 5mm
+
+@vskip 5mm
+@b{Options:}
+@table @code
+
+@item   @t{--full}
+    when invoked as @t{gxpc} @t{rsh} @t{--full} (with no other args),
+    show command lines of all available rsh-like commands.
+
+@end table
+@vskip 5mm
+
+@vskip 5mm
+@b{Examples:}
+@example
+
+1.
+  @t{gxpc} @t{rsh} ssh
+  (output) ssh : ssh -o 'StrictHostKeyChecking no' ... -A %target% %cmd%
+
+@end example
+@vskip 5mm
+
+  This displays that an rsh-like command named 'ssh' is configured,
+  and gxp understands that, to run a command a host via ssh, it should
+  @t{use} a command:
+
+@vskip 5mm
+@example
+
+         ssh -o 'StrictHostKeyChecking no' ... -A %target% %cmd%
+
+@end example
+@vskip 5mm
+
+  with %target% replaced by a target name (normally a
+  hostname) and %cmd% by whatever commands it wants
+  to execute on the target.
+  
+2.   
+  @t{gxpc} @t{rsh} ssh ssh -i elsewhere/id_dsa -o 'StrictHostKeyChecking no' -A %target% %cmd%
+
+@vskip 5mm
+@example
+
+  This instructs gxp to @t{use} command line:
+
+@end example
+@vskip 5mm
+
+     ssh -i elsewhere/id_dsa -o 'StrictHostKeyChecking no' -A %target% %cmd%
+
+@vskip 5mm
+@example
+
+  when it uses ssh.  You can arbitrarily name a new rsh-like command. 
+  For example, let's say on some hosts, ssh daemons listen on customized 
+  ports (say 2000) and you need to connect to that port to login those 
+  hosts, while connecting to the regular port to login others. Then you 
+  first define a new rsh-like command.
+
+@end example
+@vskip 5mm
+  
+3.
+  @t{gxpc} @t{rsh} ssh2000 ssh -p 2000 -o 'StrictHostKeyChecking no' -A %target% %cmd%
+
+@vskip 5mm
+@example
+
+  And you specicy ssh2000 label to login those hosts, using 'use' command. @t{e}.g.,
+
+@end example
+@vskip 5mm
+
+     @t{use} ssh2000 <src> <target>
+
+@vskip 5mm
+@b{See Also:}
+@example
+
+  @t{use} @t{explore}
+
+@end example
+@vskip 5mm
+
+
+@node set_max_buf_len, show_explore, rsh, Command Reference
+@section set_max_buf_len
+@vskip 5mm
+@b{Usage:}
+@example
+
+  @t{gxpc} @t{set_max_buf_len} @var{N}
+
+@end example
+@vskip 5mm
+
+@vskip 5mm
+@b{Description:}
+
+
+  Set maximum internal buffer size of gxp daemons in bytes.
+  default is 10KB and any value below the default is ignored. If no argument
+  is given, @t{use} the default value.
+
+@node show_explore, showmasks, set_max_buf_len, Command Reference
+@section show_explore
+@vskip 5mm
+@b{Usage:}
+@example
+
+  @t{gxpc} @t{show_explore} @var{SRC} @var{TARGET}
+
+@end example
+@vskip 5mm
+
+@vskip 5mm
+@b{Description:}
+
+
+  Show command used to @t{explore} @var{TARGET} from @var{SRC}.
+
+@node showmasks, stat, show_explore, Command Reference
+@section showmasks
+@vskip 5mm
+@b{Usage:}
+@example
+
+  @t{gxpc} @t{showmasks} [@t{--level} 0/1] [@var{NAME}]
+  @t{e}.g.,
+  @t{gxpc} @t{showmasks}
+  @t{gxpc} @t{showmasks} @t{--level} 1
+
+@end example
+@vskip 5mm
+
+@vskip 5mm
+@b{Description:}
+
+
+  Show summary (@t{--level} 0) or detail (@t{--level} 1) of all execution
+masks (if `name' is omitted) or a specified excution mask named
+`name.' The name of the current default execution mask is `0'.
+
+@vskip 5mm
+@b{Examples:}
+@example
+
+  @t{gxpc} @t{showmasks}
+  @t{gxpc} @t{showmasks} @t{--level} 0     # show summary of all exec masks
+  @t{gxpc} @t{showmasks} @t{--level} 0 0   # show summary of the current mask
+  @t{gxpc} @t{showmasks} @t{--level} 1 0   # show detail of current exec mask
+  @t{gxpc} @t{showmasks} @t{--level} 1 all # show detail of exec mask named `all'
+
+@end example
+@vskip 5mm
+
+Without any argument as in the first line, a summary like the
+following is shown.
+
+@vskip 5mm
+@example
+
+   0 : 1
+   1 : 66
+   six : 6
+   ten : 8
+   half : 27
+
+@end example
+@vskip 5mm
+
+This says there are three execution masks, called `0', `1',
+`six', `ten', and `half.' The right column indicates the number
+of nodes that will execute a command when the mask is selected by
+a @t{--withmask} (@t{-m}) option. `0' is the current, default execution
+mask, used when @t{--withmask} (@t{-m}) option is not given. These
+masks are created by @t{savemask} or @t{pushmask} command.
+
+When option @t{--level} 1 is given, details about the execution mask
+will be shown, like the following.
+
+@vskip 5mm
+@example
+
+  six : 6
+   idx: name (gupid)
+     -: hongo-lucy-tau-2006-12-31-22-40-24-31387
+     -:  hongo002-tau-2006-12-31-13-39-17-338
+     0:   hongo010-tau-2006-12-31-22-25-58-20559
+     -:  hongo006-tau-2006-12-31-22-27-19-11951
+     1:   hongo020-tau-2006-12-31-22-34-06-11026
+     -:  hongo001-tau-2006-12-31-22-34-38-15517
+     2:   hongo030-tau-2006-12-31-22-44-07-4931
+     -:  hongo007-tau-2006-12-31-22-30-54-21738
+     3:   hongo040-tau-2006-12-31-22-47-55-32666
+     -:  hongo004-tau-2008-12-31-22-42-33-31254
+     4:   hongo060-tau-2006-12-31-22-42-59-3899
+     -:  hongo005-tau-2006-12-31-22-38-30-1150
+     5:   hongo050-tau-2006-12-31-22-40-55-18088
+
+@end example
+@vskip 5mm
+
+This is a subtree of the whole tree of gxp daemons.  Nodes that will
+actually execute commands will have an index number (0, 1, ..., 5) on
+the first column. Nodes marked with `-' will not execute the
+command, but are part of the minimum subtree containing those six
+nodes.
+
+@vskip 5mm
+@b{See Also:}
+@example
+
+  @t{smask} @t{rmask} @t{savemask} @t{restoremask} @t{pushmask} @t{popmask}
+
+@end example
+@vskip 5mm
+
+@node stat, trim, showmasks, Command Reference
+@section stat
+@vskip 5mm
+@b{Usage:}
+@example
+
+  @t{gxpc} @t{stat} [@var{LEVEL}]
+
+@end example
+@vskip 5mm
+
+@vskip 5mm
+@b{Description:}
+
+
+  Show all live gxp daemons in tree format. @var{LEVEL} is 0, 1, or 2 and
+determines the detail level of the information shown.
+
+@node trim, use, stat, Command Reference
+@section trim
+@vskip 5mm
+@b{Usage:}
+@example
+
+  @t{gxpc} @t{trim}
+
+@end example
+@vskip 5mm
+
+@vskip 5mm
+@b{Description:}
+
+
+  Trim (release) some subtrees of gxp daemons. This is typically
+used after a @t{ping} cmd followed by @t{smask}, to prune non-responding
+(dead) daemons.  Specifically, @t{trim} command will be executed on
+the selected nodes, and each such node will throw away a children
+@var{C} if no nodes under the subtree rooted at @var{C} are selected for
+execution of this @t{trim} command. This effectively prunes (trims)
+the subtree from the tree of gxp daemons. For example,
+
+@vskip 5mm
+@example
+
+  @t{gxpc} @t{ping}
+  # If there are some non-responding daemons, this command will hang.
+  # type <Ctrl-C> to @t{quit}.
+  @t{gxpc} @t{smask}
+  @t{gxpc} @t{trim}
+
+@end example
+@vskip 5mm
+
+@node use, version, trim, Command Reference
+@section use, edges
+@vskip 5mm
+@b{Usage:}
+@example
+
+  @t{gxpc} @t{use}          [@t{--as} @var{USER}] @var{RSH_NAME} @var{SRC} [@var{TARGET}]
+  @t{gxpc} @t{use} @t{--delete} [@t{--as} @var{USER}] @var{RSH_NAME} @var{SRC} [@var{TARGET}]
+  @t{gxpc} @t{use}
+  @t{gxpc} @t{use} @t{--delete} [idx]
+
+@end example
+@vskip 5mm
+
+  @t{e}.g.,
+  @t{gxpc} @t{use} ssh your_hostname compute_node_prefix
+
+@vskip 5mm
+@b{Description:}
+
+
+
+@vskip 5mm
+@example
+
+  Configure rsh-like commands used to login targets matching a
+particular pattern from hosts matching a particular pattern. The
+typical usage is `@t{gxpc} @t{use} @var{RSH_NAME} @var{SRC} @var{TARGET}', which says gxp can
+@t{use} an rsh-like command @var{RSH_NAME} for @var{SRC} to login @var{TARGET}. @t{gxpc}
+remembers these facts to decide which hosts should issue which
+commands to login which hosts, when @t{explore} command is issued. See the
+tutorial section of the manual.
+
+@end example
+@vskip 5mm
+
+@vskip 5mm
+@b{Examples:}
+@example
+
+  @t{gxpc} @t{use}           ssh abc000.def.com pqr.xyz.ac.jp
+  @t{gxpc} @t{use}           ssh abc000 pqr
+  @t{gxpc} @t{use}           ssh abc
+  @t{gxpc} @t{use}           @t{rsh} abc
+  @t{gxpc} @t{use} @t{--as} taue ssh abc000 pqr
+  @t{gxpc} @t{use} qrsh      abc
+  @t{gxpc} @t{use} qrsh_host abc
+  @t{gxpc} @t{use} sge       abc
+  @t{gxpc} @t{use} torque    abc
+
+@end example
+@vskip 5mm
+
+The first line says that, if @t{gxpc} is told to login pqr.xyz.ac.jp by
+@t{explore} command, hosts named abc000.def.com can @t{use} `ssh' method to do
+so.  How it translates into the actual ssh command line can be shown
+by `@t{show_explore}' command (try `@t{gxpc} @t{help} @t{show_explore}') and can be
+configured by `@t{rsh}' command (try `@t{gxpc} @t{help} @t{rsh}').
+
+@var{SRC} and @var{TARGET} are actually regular expressions, so the line like the
+first one can often be written like the second one.  The first line
+is equivalent to the second line as long as there is only one host
+begining with abc000 and there is only one target beginning with pqr.
+In general, the specification:
+
+@vskip 5mm
+@example
+
+  @t{gxpc} @t{use} @var{RSH_NAME} @var{SRC} @var{TARGET}
+
+@end example
+@vskip 5mm
+
+is read: if @t{gxpc} is told to login a target matching regular
+expession @var{TARGET}, a host matching regular expression @var{SRC} can @t{use}
+@var{RSH_NAME} to do so.
+
+Note that the effect of @t{use} command is @var{NOT} to specify which target
+@t{gxpc} should login, but to specify @var{HOW} it can do so, if it is told
+to. It is the role of @t{explore} command to specify which target hosts it
+should login
+
+If the @var{TARGET} argument is omitted as in the third line, it is
+treated as if @var{TARGET} expression is @var{SRC}. That is, the third line
+is equivalent to:
+
+@vskip 5mm
+@example
+
+  @t{gxpc} @t{use} ssh abc abc
+
+@end example
+@vskip 5mm
+
+This is often useful to express that ssh login is possible
+between hosts within a single cluster, which typically have a
+common prefix in their host names. If the traditional @t{rsh} command
+is allowed within a single cluster, the fourth line may be useful
+too.
+
+If @t{--as} user option is given, login is issued using an explicit user
+name. The fifth line says when gxp attempts to login pqr from abc000,
+the explicit user name `taue' should be given. You do not need this as
+long as the underlying rsh-like command will complement it by a
+configuration file. @t{e}.g., ssh will read ~/.ssh/config to complement
+user name used to login a particular host.
+
+qrsh_host uses command qrsh, with an explicit hostname argument
+to login a particular host (@t{i}.@t{e}., qrsh -l hostname=...).  This is
+useful in environments where direct ssh is discouraged or
+disallowed and qrsh is preferred.
+
+qrsh also uses qrsh, but without an explicit hostname. The host
+is selected by the scheduler. Therefore it does not @t{make} sense to
+try to speficify a particular hostname as @var{TARGET}.  Thus, the
+effect of the line
+
+@vskip 5mm
+@example
+
+  @t{gxpc} @t{use} qrsh abc
+
+@end example
+@vskip 5mm
+
+is if targets beginning with abc is given (upon @t{explore} command),
+a host beginning with abc will issue qrsh, and get whichever host
+is allocated by the scheduler.
+
+@vskip 5mm
+@b{See Also:}
+@example
+
+  @t{explore} @t{rsh}
+
+@end example
+@vskip 5mm
+
+@node version, vgxp, use, Command Reference
+@section version
+@vskip 5mm
+@b{Usage:}
+@example
+
+  @t{gxpc} @t{version}
+
+@end example
+@vskip 5mm
+
+@node vgxp,  , version, Command Reference
+@section vgxp
+@vskip 5mm
+@b{Usage:}
+@example
+
+  @t{gxpc} @t{vgxp}
+
+@end example
+@vskip 5mm
+
+
+@node Tools Reference, Troubleshooting, Command Reference, Top
+@chapter Tools Reference
+todo
+
+@node Troubleshooting, Environment Variables Reference, Tools Reference, Top
+@chapter Troubleshooting
+todo
+
+@node Environment Variables Reference, Key Stroke Reference, Troubleshooting, Top
+@chapter Environment Variables Reference
+todo
+
+@node Key Stroke Reference,  , Environment Variables Reference, Top
+@chapter Key Stroke Reference
+todo
+
+@menu
+* Indices::                     
+* Function Index::              
+* Variable Index::              
+* Data Type Index::             
+* Program Index::               
+* Concept Index::               
+@end menu
+
+@node Indices, Function Index, Key Stroke Reference, Key Stroke Reference
+@unnumberedsec Indices
+
+@menu
+* Function Index::              
+* Variable Index::              
+* Data Type Index::             
+* Program Index::               
+* Concept Index::               
+@end menu
+
+@node Function Index, Variable Index, Indices, Key Stroke Reference
+@unnumberedsec Function Index
+
+@printindex fn
+
+@node Variable Index, Data Type Index, Function Index, Key Stroke Reference
+@unnumberedsec Variable Index
+
+@printindex vr
+
+@node Data Type Index, Program Index, Variable Index, Key Stroke Reference
+@unnumberedsec Data Type Index
+
+@printindex tp
+
+@node Program Index, Concept Index, Data Type Index, Key Stroke Reference
+@unnumberedsec Program Index
+
+@printindex pg
+
+@node Concept Index,  , Program Index, Key Stroke Reference
+@unnumberedsec Concept Index
+
+@printindex cp
+
+
+@contents
+
+@bye
+                                   
+

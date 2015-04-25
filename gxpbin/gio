@@ -1,0 +1,634 @@
+#!/usr/bin/env python
+
+# GIO File System Benchmark
+# Copyright (C) 2008  Nan Dun <dunnan@yl.is.s.u-tokyo.ac.jp>
+#
+# This program can be distributed under the terms of the GNU GPL.
+# See the file COPYING.
+
+GIO_BENCHMARK_VERSION = 0.5
+GIO_BENCHMARK_DATE = "2009.03.23"
+
+import errno
+import fcntl
+import optparse
+import os
+import pwd
+import random
+import re
+import select
+import shutil
+import socket
+import string
+import stat
+import sys
+import textwrap
+import time
+
+from pfsb import *
+
+if sys.platform == "win32":
+    timer = time.clock
+else:
+    timer = time.time
+
+def ws(s):
+    sys.stdout.write(s)
+    sys.stdout.flush()
+
+def es(s):
+    sys.stderr.write(s)
+    sys.stderr.flush()
+
+# basic GXP stuff
+def get_rank():
+    return int(os.environ.get("GXP_EXEC_IDX", "0"))
+
+def get_size():
+    return int(os.environ.get("GXP_NUM_EXECS", "1"))
+
+class Host:
+    def __init__(self, h, f, i, idx):
+        self.h = h      # hostname
+        self.f = f      # fqdn
+        self.i = i      # ip address
+        self.idx = idx  # GXP_EXEC_IDX
+        self.key = h    # misc usage
+
+    def __repr__(self):
+        return ("Host(%(h)r,%(f)r,%(i)r,%(idx)r)" % self.__dict__)
+
+    def match_regexp(self, regexp):
+        return regexp.match(self.f)
+
+def get_my_host():
+    h = socket.gethostname()
+    f = socket.getfqdn()
+    try:
+        i = socket.gethostbyname(f)
+    except socket.gaierror:
+        es("warning: failed to get ip address of %s\n" % f)
+        i = '127.0.0.1'
+    idx = get_rank()
+    return Host(h, f, i, idx)
+
+def get_all_hosts(wp, fp):
+    wp.write("%r\n" % get_my_host())
+    wp.flush()
+    hosts = []
+    for i in range(get_size()):
+        line = fp.readline()
+        assert line != ""
+        host = eval(line.strip())
+        hosts.append((host.idx, host))
+    hosts.sort()
+    hosts_list = map(lambda (idx,host): host, hosts)
+    hosts_map = {}
+    for h in hosts_list:
+        hosts_map[h.key] = h
+    return hosts_list, hosts_map
+
+def set_close_on_exec():
+    try:
+        fd_3 = fcntl.fcntl(3, fcntl.F_GETFD)
+        fd_4 = fcntl.fcntl(4, fcntl.F_GETFD)
+    except IOError:
+        fd_3 = fcntl.FD_CLOEXEC
+        fd_4 = fcntl.FD_CLOEXEC
+    fd_3 = fd_3 | fcntl.FD_CLOEXEC
+    fd_4 = fd_4 | fcntl.FD_CLOEXEC
+    fcntl.fcntl(3, fcntl.F_SETFD, fd_3)
+    fcntl.fcntl(4, fcntl.F_SETFD, fd_4)
+
+class GridDataGenerator(DataGenerator):
+    def __init__(self, host, rank, size, wp, fp, threads, base):
+        DataGenerator.__init__(self, base)
+        self.rank = rank
+        self.host = host
+        self.size = size
+        self.wp = wp
+        self.fp = fp
+        self.threads = 1
+        self.local_files = None
+        self.local_dirs = None
+        self.global_files = None  # [ file1, file2, ..., filen ]
+        self.global_dirs = None
+        self.files_set = None     # set[rank] = [ file1, file2, ... ]
+        self.dirs_list = None
+        
+        # internal variable
+        self.round_cnt = 0
+    
+    def broadcast(self, msg):
+        self.wp.write(msg)
+        self.wp.write('\n') # Why?
+        self.wp.flush()
+    
+    def receive(self):
+        msg = self.fp.readline()
+        assert msg != ""
+        return msg.strip()
+    
+    def gen_dirs(self, num, factor=16):
+        DataGenerator.gen_dirs(self, num, factor)
+        self.local_dirs = list(self.dirs)
+    
+    def gen_files(self, num):
+        DataGenerator.gen_files(self, num)
+        self.local_files = list(self.files)
+    
+    def merge_dirs(self):
+        self.global_dirs = []
+        self.dirs_set = {}
+        self.broadcast(repr((self.rank, self.local_dirs)))
+        for i in range(0, self.size):
+            rank, dirs = eval(self.receive())
+            self.dirs_set[rank] = dirs
+            self.global_dirs.extend(dirs)
+    
+    def merge_files(self):
+        self.global_files = []
+        self.files_set = {}
+        self.broadcast(repr((self.rank, self.local_files)))
+        for i in range(0, self.size):
+            rank, files = eval(self.receive())
+            self.files_set[rank] = files
+            self.global_files.extend(files)
+
+    def shuffle(self, shuffle="random", round=1):
+        if shuffle == "random":
+            if self.global_dirs is not None:
+                if self.rank == 0:
+                    random.shuffle(self.dirs_set)
+                    self.broadcast(repr(self.dirs_set))
+                self.dirs_set = eval(self.receive())
+                self.dirs = self.dirs_set[self.rank]
+                self.dir = self.dirs[0]
+            if self.global_files is not None:
+                if self.rank == 0:
+                    random.shuffle(self.files_set)
+                    self.broadcast(repr(self.files_set))
+                self.files_set = eval(self.receive())
+                self.files = self.files_set[self.rank]
+                self.file = self.files[0]
+        elif shuffle == "round":
+            self.round_cnt += 1
+            if self.global_dirs is not None:
+                self.dirs = \
+                self.dirs_set[(self.rank + round * self.round_cnt) % self.size]
+                self.dir = self.dirs[0]
+            if self.global_files is not None:
+                self.files = \
+                self.files_set[(self.rank + round * self.round_cnt) % self.size]
+                self.file = self.files[0]
+                
+            
+class GridFileSystemBenchmark(PyFileSystemBenchmark):
+    def __init__(self, hosts, rank, wp, fp, opts=None, **kw):
+        PyFileSystemBenchmark.__init__(self, opts, **kw)
+        # GXP runtime variables
+        self.rank = rank
+        self.host = hosts[rank]
+        self.size = get_size()
+        self.wp = wp
+        self.fp = fp
+        
+        self.data = GridDataGenerator(self.host, rank, self.size, wp, fp,
+                    self.threads, self.wdir)
+        self.resarr = [] # array contains result from each worker
+
+    def barrier(self):
+        self.wp.write('\n')
+        self.wp.flush()
+        for i in range(self.size):
+            r = self.fp.readline()
+            if r == "":
+                return -1
+        return 0
+    
+    def broadcast(self, msg):
+        self.wp.write(msg)
+        self.wp.write('\n') # Why?
+        self.wp.flush()
+    
+    def receive(self):
+        msg = self.fp.readline()
+        assert msg != ""
+        return msg.strip()
+
+    # override methods
+    def pre_processing(self):
+        if self.verbosity >= 3:
+            self.verbose("pre_processing: ensure_dir(%s)" % self.data.tempdir)
+        self.ensure_dir(self.data.tempdir)
+        
+        if self.mode == 'io':
+            if self.verbosity >= 3:
+                self.verbose("pre_processing: self.data.gen_files()")
+            self.data.gen_files(self.threads)
+        elif self.mode == 'meta':
+            if self.verbosity >= 3:
+                self.verbose("pre_processing: self.data.gen_dirs()")
+                self.verbose("pre_processing: self.data.gen_files()")
+            self.data.gen_dirs(self.opcnt, self.factor)
+            self.data.gen_files(self.opcnt)
+            self.data.merge_dirs()
+        self.data.merge_files()
+
+    def aggregate_results(self):
+        if self.dryrun:
+            return
+
+        for i in range(0, self.size):
+            self.resarr.append(eval(self.receive()))
+        
+        for o in self.opset:
+            self.aggres[o] = ("", -1, 0, 0, "", -1)
+        self.aggres['cleanup_time'] = -1
+        
+        if self.mode == 'io':
+            self.aggregate_io_results()
+        elif self.mode == 'meta':
+            self.aggregate_meta_results()
+    
+    def aggregate_io_results(self, resarr=None):
+        if resarr is None:
+            resarr = self.resarr
+
+        for o in self.opset:
+            for r in resarr:
+                a_min, a_max, a_sum, a_agg, a_start, a_end = self.aggres[o]
+                o_total, o_min, o_max, o_sum, o_start, o_end = r[o]
+                a_min = min(a_min, o_min)
+                a_max = max(a_max, o_max)
+                a_sum += o_sum
+                a_agg = max(a_agg, o_total)
+                a_start = min(a_start, o_start)
+                a_end = max(a_end, o_end)
+                self.aggres[o] = (a_min, a_max, a_sum, a_agg, a_start, a_end)
+        self.aggres['cleanup_time'] = max(self.aggres['cleanup_time'], 
+                                          r['cleanup_time'])
+        return self.aggres 
+
+    def aggregate_meta_results(self, resarr=None):
+        if resarr is None:
+            resarr = self.resarr
+
+        for o in self.opset:
+            for r in resarr:
+                a_min, a_max, a_sum, a_agg, a_start, a_end = self.aggres[o]
+                o_total, o_min, o_max, o_start, o_end = r[o]
+                a_min = min(a_min, o_min)
+                a_max = max(a_max, o_max)
+                a_sum += self.opcnt / o_total
+                a_agg = max(a_agg, o_total)
+                a_start = min(a_start, o_start)
+                a_end = max(a_end, o_end)
+                self.aggres[o] = (a_min, a_max, a_sum, a_agg, a_start, a_end)
+        self.aggres['cleanup_time'] = max(self.aggres['cleanup_time'], 
+                                          r['cleanup_time'])
+    def perform_io_tests(self):
+        self.pre_processing()
+        
+        self.barrier()
+        if self.threads <= 1:
+            self.res['write'] = self.write(self.data.file)
+        else:
+            self.res['write'] = self.threaded_io(self.data.files, 'write')
+        self.inter_processing()
+            
+        if 'rewrite' in self.opset:
+            self.barrier()
+            if self.threads <= 1:
+                self.res['rewrite'] = self.rewrite(self.data.file)
+            else:
+                self.res['rewrite'] = self.threaded_io(self.data.files, 'rewrite')
+            self.inter_processing()
+            
+        if 'read' in self.opset:
+            self.barrier()
+            if self.threads <= 1:
+                self.res['read'] = self.read(self.data.file)
+            else:
+                self.res['read'] = self.threaded_io(self.data.files, 'read')
+            self.inter_processing()
+            
+        if 'reread' in self.opset:
+            self.barrier()
+            if self.threads <= 1:
+                self.res['reread'] = self.reread(self.data.file)
+            else:
+                self.res['reread'] = self.threaded_io(self.data.files, 'reread')
+            self.inter_processing()
+            
+        if 'fwrite' in self.opset:
+            self.barrier()
+            if self.threads <= 1:
+                self.res['fwrite'] = self.fwrite(self.data.file)
+            else:
+                self.res['fwrite'] = self.threaded_io(self.data.files, 'fwrite')
+            self.inter_processing()
+            
+        if 'frewrite' in self.opset:
+            self.barrier()
+            if self.threads <= 1:
+                self.res['frewrite'] = self.frewrite(self.data.file)
+            else:
+                self.res['frewrite'] = self.threaded_io(self.data.files, 'frewrite')
+            self.inter_processing()
+            
+        if 'fread' in self.opset:
+            self.barrier()
+            if self.threads <= 1:
+                self.res['fread'] = self.fread(self.data.file)
+            else:
+                self.res['fread'] = self.threaded_io(self.data.files, 'fread')
+            self.inter_processing()
+
+        if 'freread' in self.opset:
+            self.barrier()
+            if self.threads <= 1:
+                self.res['freread'] = self.freread(self.data.file)
+            else:
+                self.res['freread'] = self.threaded_io(self.data.files, 'freread')
+            self.inter_processing()
+            
+        self.barrier()
+        start = timer()
+        self.post_processing()
+        self.barrier()
+        self.res['cleanup_time'] = timer() - start
+            
+        self.broadcast(repr(self.res))
+        return self.res
+
+    def perform_meta_tests(self):
+        self.pre_processing()
+
+        if 'mkdir' in self.opset or 'rmdir' in self.opset:
+            self.barrier()
+            self.res['mkdir'] = self.mkdir(self.data.dirs);
+            self.inter_processing()
+
+        if 'rmdir' in self.opset:
+            self.barrier()
+            self.res['rmdir'] = self.rmdir(self.data.dirs);
+            self.inter_processing()
+        
+        if 'creat' in self.opset or 'access' in self.opset or \
+           'open' in self.opset or 'open+close' in self.opset or \
+           'stat_EXIST' in self.opset or 'stat_NONEXIST' in self.opset or \
+           'utime' in self.opset or 'chmod' in self.opset or \
+           'rename' in self.opset or 'unlink' in self.opset:
+            self.barrier()
+            self.res['creat'] = self.creat(self.data.files);
+            self.inter_processing()
+
+        if 'access' in self.opset:
+            self.barrier()
+            self.res['access'] = self.access(self.data.files);
+            self.inter_processing()
+            
+        if 'open' in self.opset:
+            self.barrier()
+            self.res['open'] = self.open(self.data.files);
+            self.inter_processing()
+        
+        if 'open+close' in self.opset:
+            self.barrier()
+            self.res['open+close'] = self.open_close(self.data.files);
+            self.inter_processing()
+        
+        if 'stat_EXIST' in self.opset: 
+            self.barrier()
+            self.res['stat_EXIST'] = self.stat(self.data.files);
+            self.inter_processing()
+
+        if 'stat_NONEXIST' in self.opset: 
+            self.barrier()
+            self.res['stat_NONEXIST'] = self.stat_non(self.data.files);
+            self.inter_processing()
+        
+        if 'utime' in self.opset:
+            self.barrier()
+            self.res['utime'] = self.utime(self.data.files);
+            self.inter_processing()
+        
+        if 'chmod' in self.opset:
+            self.barrier()
+            self.res['chmod'] = self.chmod(self.data.files);
+            self.inter_processing()
+        
+        if 'rename' in self.opset:
+            self.barrier()
+            self.res['rename'] = self.rename(self.data.files);
+            self.inter_processing()
+
+        if 'unlink' in self.opset:
+            self.barrier()
+            self.res['unlink'] = self.unlink(self.data.files);
+            self.inter_processing()
+        
+        self.barrier()
+        start = timer()
+        self.post_processing()
+        self.barrier()
+        self.res['cleanup_time'] = timer() - start
+
+        self.broadcast(repr(self.res))
+        return self.res
+    
+    def print_results(self):
+        str = "GIO Benchmark (version %.1f, %s)\n" \
+              "             Run began: %s\n" \
+              "               Run end: %s\n" \
+              "     Command line used: %s\n" \
+              "     Working directory: %s\n" % \
+              (GIO_BENCHMARK_VERSION, GIO_BENCHMARK_DATE,
+              time.strftime("%a, %d %b %Y %H:%M:%S %Z", self.start[0]),
+              time.strftime("%a, %d %b %Y %H:%M:%S %Z", self.end[0]),
+              self.cmd, self.wdir)
+        ws(str)
+        
+        if self.dryrun:
+            ws("dryrun, nothing was executed.\n")
+            return
+
+        if self.mode == "io":
+            self.print_io_results()
+        if self.mode == "meta":
+            self.print_meta_results()
+
+def parse_argv(argv):
+    usage = "gxpc mw %prog [options]"
+    
+    # OptionParserHelpFormatter is in pfsb.py
+    parser = optparse.OptionParser(usage=usage,
+                formatter=OptionParserHelpFormatter())
+    
+    parser.remove_option("-h")
+    parser.add_option("-h", "--help", action="store_true",
+                      dest="help", default=False,
+                      help="show the help message and exit")
+    
+    # control options, keep consitent with Pfsb's variable
+    parser.add_option("-m", "--mode", action="store", type="string",
+                      dest="mode", metavar="MODE", default="io",
+                      help="set test mode\n"
+                           "  io: I/O throughput test mode (default)\n"
+                           "  meta: metadata operations test mode")
+    
+    default_wdir = "/tmp/gbench-%s" % pwd.getpwuid(os.getuid())[0]
+    parser.add_option("-w", "--wdir", action="store", type="string",
+                      dest="wdir", metavar="DIR",
+                      default=default_wdir,
+                      help="working directory (default: %s),"
+                           " BE CAREFUL to write on your NFS" % default_wdir)
+    
+    parser.add_option("-i", action="append", type="int",
+                      dest="test", metavar="NUM",
+                      default=[], # appended later
+                      help="list of tests to perform (default: 0)\n"
+                           "I/O mode:\n"
+                           " 0=all, 1=read, 2=reread, 3=write, 4=rewrite\n"
+                           " 5=fread, 6=freread, 7=fwrite, 8=frewrite\n"
+                           "Meta mode: \n"
+                           " 0=all, 1=mkdir, 2=rmdir, 3=creat, 4=access,\n"
+                           " 5=open, 6=open+close, 7=stat_EXIST, \n"
+                           " 8=stat_NONEXIST, 9=utime, 10=chmod, 11=unlink\n")
+ 
+    
+    parser.add_option("-s", "--filesize", action="store", type="string",
+                      dest="filesize", metavar="NUM", default="1MB",
+                      help="file size (default: 1MB)")
+    
+    parser.add_option("-b", "--blocksize", action="store", type="string",
+                      dest="blksize", metavar="NUM", default="1KB",
+                      help="block size (default: 1KB)")
+    
+    parser.add_option("-t", action="store", type="int",
+                      dest="threads", metavar="NUM", default=1,
+                      help="number of concurrent threads per node"
+                           " (default: 1)")
+    
+    parser.add_option("-u", "--unit", action="store", type="string",
+                      dest="unit", metavar="KB/MB/GB",
+                      default="MB",
+                      help="throughput unit: KB, MB, or GB (default: MB)")
+    
+    parser.add_option("-c", "--count", action="store", type="int",
+                      dest="opcnt", metavar="NUM", default=10,
+                      help="number of meta operations (default: 10)")
+    
+    default_factor = 16
+    parser.add_option("-f", "--factor", action="store", type="int",
+                      dest="factor", metavar="NUM", default=default_factor,
+                      help="factor of directory tree (default: %d)" % \
+                            default_factor)
+    
+    parser.add_option("-v", "--verbosity", action="store", type="int",
+                      dest="verbosity", metavar="0/1/2/3", default=0,
+                      help="verbosity level (default: 0)")
+    
+    parser.add_option("-d", "--dryrun", action="store_true",
+                      dest="dryrun", default=False,
+                      help="dryrun, do not execute (default: off)")
+    
+    parser.add_option("--without-close", action="store_false",
+                      dest="closetime", default=True,
+                      help="exclude close in timing (default: disable)")
+    
+    parser.add_option("--syncio", action="store_true",
+                      dest="sync", default=False,
+                      help="synchronized I/O (default: off)")
+    
+    parser.add_option("--shuffle", action="store", type="string",
+                dest="shuffle", default=None,
+                help="shuffle data (default: disabled)")
+    
+    parser.add_option("--round", action="store", type="int",
+                dest="round", default=1,
+                help="offset in round shuffle (default: 1)")
+    
+    parser.add_option("--sleep", action="store", type="float",
+                      dest="sleep", metavar="SECONDS", default=0.0,
+                      help="sleep between operations (default: 0.0)")
+    
+    parser.add_option("--keep", action="store_true",
+                      dest="keep", default=False,
+                      help="keep temparary files (default: disabled)")
+   	
+    opts, args = parser.parse_args(argv)
+    
+    opts.print_help = parser.print_help
+
+    if len(opts.test) == 0 or 0 in opts.test:
+        if opts.mode == 'io':
+            opts.opset = list(OPSET_IO)
+        if opts.mode == 'meta':
+            opts.opset = list(OPSET_META)
+    else:
+        opts.test.sort()
+        try:
+            if opts.mode == 'io':
+                opts.opset = map(lambda x:OPSET_IO[x-1], opts.test)
+            if opts.mode == 'meta':
+                opts.opset = map(lambda x:OPSET_META[x-1], opts.test)
+        except IndexError, err:
+            errstr = "error: unknown test operation\n"
+            return None, errstr
+
+    opts.wdir = os.path.abspath(opts.wdir)
+    if opts.factor <= 0:
+        errstr = "error: invalid factor %d\n" % opts.factor
+        return  None, errstr
+
+    opts.cmd = " ".join(sys.argv)
+
+    # file size/block size/unit
+    opts.filesize = parse_data_size(opts.filesize)
+    opts.blksize = parse_data_size(opts.blksize)
+    opts.unit = opts.unit.upper()
+    if not opts.unit.endswith('B'):
+        opts.unit = opts.unit + 'B'
+   
+    return opts, None
+
+def main():
+    # initial GXP-related environments
+    try:
+        set_close_on_exec()
+    except IOError:
+        es("usage: gxpc mw gio.py\n")
+        return 1
+    wp = os.fdopen(3, "wb")
+    fp = os.fdopen(4, "rb")
+    hosts, hosts_map = get_all_hosts(wp, fp)
+    if hosts is None:
+        es("error: failed to get all hosts\n")
+        return 1
+    rank = get_rank()
+    myhost = hosts[rank]
+    
+    # parsing arguments
+    opts, errstr = parse_argv(sys.argv[1:])
+    if opts is None:
+        if rank == 0:
+            ws(errstr)
+        return 1
+    if opts.help:
+        if rank == 0:
+            opts.print_help();
+        return 0
+    
+    # execution
+    gio = GridFileSystemBenchmark(hosts, rank, wp, fp, opts)
+    gio.perform_tests()
+    if rank == 0:
+        gio.aggregate_results()
+        gio.print_results()
+    
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())

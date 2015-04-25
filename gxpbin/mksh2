@@ -1,0 +1,209 @@
+#!/usr/bin/env python
+# Copyright (c) 2009 by Kenjiro Taura. All rights reserved.
+# Copyright (c) 2008 by Kenjiro Taura. All rights reserved.
+# Copyright (c) 2007 by Kenjiro Taura. All rights reserved.
+# Copyright (c) 2006 by Kenjiro Taura. All rights reserved.
+# Copyright (c) 2005 by Kenjiro Taura. All rights reserved.
+#
+# THIS MATERIAL IS PROVIDED AS IS, WITH ABSOLUTELY NO WARRANTY 
+# EXPRESSED OR IMPLIED.  ANY USE IS AT YOUR OWN RISK.
+# 
+# Permission is hereby granted to use or copy this program
+# for any purpose,  provided the above notices are retained on all 
+# copies. Permission to modify the code and to distribute modified
+# code is granted, provided the above notices are retained, and
+# a notice that the code was modified is included with the above
+# copyright notice.
+#
+# $Header: /cvsroot/gxp/gxp3/gxpbin/mksh2,v 1.7 2011/08/01 18:14:54 ttaauu Exp $
+# $Name:  $
+#
+
+import errno,os,re,sys,socket,string
+
+def Es(s):
+    sys.stderr.write(s)
+
+# 2010.5.27 
+# no longer pass these three variables, because it does not make sense
+# to use mksh on worker hosts
+# "MAKEFLAGS", "MAKELEVEL", "MAKEFILES"
+# "GXP_MAKELEVEL", "GXP_MAKE_SO_NAME",
+# "GXP_MAKE_EXIT_STATUS_CONNECT_FAILED",
+# "GXP_MAKE_EXIT_STATUS_SERVER_DIED",
+# envs_to_pass = [ "GXP_MAKE_MKSH_PID" ]
+
+def recv_exit_or_die(so):
+    hd = so.recv(10)
+    assert (len(hd) == 10), hd
+    sz = int(hd)
+    msg = so.recv(sz)
+    assert (len(msg) == sz), (sz, msg)
+    m = re.search("status: +"
+                  "(?P<idx>\d+) +"
+                  "(?P<man_name>[^ ]+) +"
+                  "(?P<ex_status>(-|\d+)) +"
+                  "(?P<term_sig>(-|\d+))",
+                  msg)
+    if m is None:
+        Es("mksh2: msg of wrong format (%s)\n" % msg)
+    idx,man_name,ex,sig = m.group("idx", "man_name", "ex_status", "term_sig")
+    # print "work %s was executed by %s" % (idx, man_name)
+    if ex == "-":
+        os.kill(os.getpid(), int(sig))
+    else:
+        os._exit(int(ex))
+
+
+def parse_cmd_attributes(cmd):
+    a = []
+    # Es("mksh2: cmd=%s\n" % cmd)
+    m = re.search("# *aff: *(.*)", cmd)
+    if m:
+        a.append("aff: %s\n" % string.strip(m.group(1)))
+    m = re.search("# *req: *(.*)", cmd)
+    if m:
+        a.append("req: %s\n" % string.strip(m.group(1)))
+    return a
+
+def submit(so_name, cmd):
+    key_cf = "GXP_MAKE_EXIT_STATUS_CONNECT_FAILED"
+    key_sd = "GXP_MAKE_EXIT_STATUS_SERVER_DIED"
+    key_nt = "GXP_MAKE_EXIT_STATUS_NO_THROW"
+    exit_status_connect_failed = int(os.environ.get(key_cf, "125"))
+    exit_status_server_dead = int(os.environ.get(key_sd, "126"))
+    exit_status_no_throw = int(os.environ.get(key_sd, "124"))
+    
+    cwd = os.path.normpath(os.getcwd())
+    mksh_pid = ("%d" % os.getpid())
+    msgs = []
+    msgs.append("cwd: %s\n" % cwd)
+    msgs.append("pid: %s\n" % mksh_pid)
+    # extend envs_to_pass
+    envs = string.split(os.environ.get("GXP_MAKE_ENVS", ""))
+    for var in envs:            # envs_to_pass + 
+        if os.environ.has_key(var):
+            varval = "%s=%s" % (var, os.environ[var])
+            msgs.append("env: %s\n" % varval)
+    msgs.extend(parse_cmd_attributes(cmd))
+    msgs.append("cmd: %s\n" % cmd)
+    so = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        so.connect(so_name)
+    except socket.error,e:
+        x = e.args[0]
+        if x == errno.ECONNREFUSED or x == errno.ENOENT:
+            Es("mksh: could not connect to job scheduler %s\n" % (e.args,))
+            sys.exit(exit_status_connect_failed)
+        else:
+            raise
+    so.send(string.join(msgs, ""))
+    if 0:
+        recv_exit_or_die(so)
+    else:
+        fd = so.fileno()
+        os.dup2(fd, 0)
+        cmd = ('if read sz status idx man_name ex sig; then if [ "${ex}" = "-" ]; then exit %d ; else exit ${ex}; fi; else exit %d; fi'
+               % (exit_status_no_throw, exit_status_server_dead))
+        os.execvp("sh", [ "sh", "-c", cmd ])
+
+local_pat = re.compile("(===+)")
+def submit_or_exec(so_name, cmd):
+    """
+    judge whether we should exec the command by this process or
+    pass it to xmake.
+    an important requirement is we need to exec directly if the
+    command is invoked by $(shell ...), because make expects its
+    stdout. if we pass it to xmake, this process does not print
+    what the cmd does.
+
+    here is the tricky way to judge if a command is run by shell.
+    it appears that
+    
+    """
+    # Es("envenv=%s\n" % os.environ)
+    local_exec_cmd = os.environ.get("GXP_MAKE_LOCAL_EXEC_CMD", "")
+    m = local_pat.match(cmd)
+    if m and len(m.group(1)) >= 3:
+        n_equals = m.end(1)
+        # if it begins with === or more equals, do not submit
+        # Es("local by %s\n" % m.group(1))
+        os.execvp("sh", [ "sh", "-c", string.lstrip(cmd[n_equals:]) ])
+    elif local_exec_cmd != "" and re.match(local_exec_cmd, cmd):
+        os.execvp("sh", [ "sh", "-c", cmd ])
+    elif cmd[0:4] == "make":
+        # recursive make
+        # Es("local by recursive make\n")
+        lev = string.atoi(os.environ["GXP_MAKELEVEL"])
+        os.environ["GXP_MAKELEVEL"] = ("%d" % (lev + 1))
+        os.execvp("sh", [ "sh", "-c", cmd ])
+    elif string.atoi(os.environ.get("MAKELEVEL", "0")) < string.atoi(os.environ["GXP_MAKELEVEL"]):
+        # GXP_MAKELEVEL is initially set to 1 by xmake, and incremented 
+        # when mksh execs recursive make.
+        # make seems to manage MAKELEVEL as follows.
+        # it internally keeps a variable x, initially unset (effectively 0).
+        # when it spawns a child task, it sets the child's MAKELEVEL to x+1,
+        # whereas when it spawns a process for $(shell ...), it leaves
+        # MAKELEVEL as it is. so this condition says the process
+        # is spawned by $(shell ...)
+        os.execvp("sh", [ "sh", "-c", cmd ])
+    else:
+        # submit all others
+        # Es("submit\n")
+        submit(so_name, cmd)
+
+def main():
+    if len(sys.argv) != 3:
+        Es("mksh: usage: mksh2 -c 'CMD'\n")
+        sys.exit(1)
+    cmd = sys.argv[2]
+    so_name = os.environ.get("GXP_JOBSCHED_WORK_SERVER_SOCK")
+    if so_name is None:
+        Es(("mksh: environment var GXP_JOBSCHED_WORK_SERVER_SOCK not "
+            "defined (perhaps you ran make, not gxpc make?)\n"))
+        sys.exit(1)
+    submit_or_exec(so_name, cmd)
+
+if __name__ == "__main__":
+    main()
+
+# $Log: mksh2,v $
+# Revision 1.7  2011/08/01 18:14:54  ttaauu
+# *** empty log message ***
+#
+# Revision 1.6  2011/07/30 13:21:19  ttaauu
+# *** empty log message ***
+#
+# Revision 1.5  2011/06/27 17:47:54  ttaauu
+# *** empty log message ***
+#
+# Revision 1.4  2011/05/11 14:16:38  ttaauu
+# *** empty log message ***
+#
+# Revision 1.3  2011/03/09 09:59:19  ttaauu
+# add # aff: name=xxx option to make
+#
+# Revision 1.2  2010/12/22 06:18:54  ttaauu
+# implemented work_db_text
+#
+# Revision 1.1  2010/12/12 06:54:29  ttaauu
+# *** empty log message ***
+#
+# Revision 1.18  2010/09/08 04:08:22  ttaauu
+# a new job scheduling framework (gxpc js). see ChangeLog 2010-09-08
+#
+# Revision 1.17  2010/05/26 17:18:48  kamoshida
+# *** empty log message ***
+#
+# Revision 1.16  2010/05/18 12:39:11  ttaauu
+# xmake --translate_dir option. 2010-05-18
+#
+# Revision 1.15  2010/01/17 17:17:28  ttaauu
+# xmake now supports --make_env. see 2010-1-18 Taura
+#
+# Revision 1.14  2009/12/11 15:54:37  ttaauu
+# ChangeLog
+#
+# Revision 1.13  2009/06/06 14:06:26  ttaauu
+# added headers and logs
+#

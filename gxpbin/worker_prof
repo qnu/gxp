@@ -1,0 +1,8 @@
+#!/bin/sh
+
+set -e
+cpu=`cat /proc/cpuinfo | grep processor | wc -l`
+mem=`free -b | grep Mem | awk '{ print $2 }'`
+
+echo cpu "${cpu}" mem "${mem}"
+

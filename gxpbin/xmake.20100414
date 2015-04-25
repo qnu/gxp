@@ -1,0 +1,2967 @@
+#!/usr/bin/python
+# Copyright (c) 2005-2009 by Kenjiro Taura. All rights reserved.
+#
+# THIS MATERIAL IS PROVIDED AS IS, WITH ABSOLUTELY NO WARRANTY 
+# EXPRESSED OR IMPLIED.  ANY USE IS AT YOUR OWN RISK.
+# 
+# Permission is hereby granted to use or copy this program
+# for any purpose,  provided the above notices are retained on all 
+# copies. Permission to modify the code and to distribute modified
+# code is granted, provided the above notices are retained, and
+# a notice that the code was modified is included with the above
+# copyright notice.
+#
+# $Header: /cvsroot/gxp/gxp3/gxpbin/xmake.20100414,v 1.3 2010/05/02 03:14:53 ttaauu Exp $
+# $Name:  $
+#
+
+import errno,os,sys,random,re,select,shlex,signal,socket,stat,string,time
+import cStringIO
+
+import gxpm2,opt2
+    
+
+"""
+Quick example:
+
+Makefile is totally usual:
+
+---------------------------------------
+all : 1.dat 2.dat 3.dat 4.dat 5.dat
+%.dat : %.src
+        your_program $< > $@
+---------------------------------------
+
+explore hosts and get ready.
+
+[10/10/10]% gxpc make -k -j 5 
+"""
+
+"""
+gxpc_make usage:
+
+  (1) grab resources by exploring and smasking as you like.
+
+  (2) run
+
+      gxpc make
+
+  instead of make. this calls unmodified GNU make.
+  
+  You probably want to give -j N option so that things are run in
+  parallel.  It is always good idea not to set N larger than the
+  number of workers (hosts you explored).
+
+  You probably also want to give -k option, so that a single failure
+  won't stop everything (non-dependent jobs keep running).
+
+  For example, with
+
+      gxpc make -k -j 5
+
+  for the above Makefile, five processes
+
+      your_program {1-5}.src > {1-5}.dat
+
+  will be invoked in parallel.
+
+"""
+
+"""
+how it works.
+
+---- : process parent/child relationship
+.... : connections (UNIX domain socket)
+
+gxpc make
+  |
+gxpc_make --------------- gxpc ...
+  |                          .
+  |                          .
+  |                          .    
+GNU make ---- mksh           .    
+         ---- mksh           .       <distributed processes>
+         ---- mksh           .    
+         ---- mksh          gxpd --- gxpd --- ... (resources)
+            ...                       +-------gxpd --- ... 
+         ---- mksh                    +-------gxpd --- ... 
+         ---- mksh                             +-------gxpd --- ... 
+         ---- mksh
+                         
+Also, there is a connection between each mksh to xmake (not indicated
+in the figure).
+
+This process (xmake) will simply run GNU make passing through whatever
+command lines to it. GNU make will run subprocesses VIA THE SPECIFIED
+MKSH. Before launching GNU make, it will run a master process with gxp
+by
+
+   gxpc e --persist 1 --tid hogehoge
+
+This command line ensures the task hogehoge persists even if no
+processes are running.
+
+Meanwhile, GNU make invokes mksh like a regular shell, i.e., mksh -c
+COMMAND.  It connects to this (xmake) process and requests the command
+line to be dispatched.
+
+xmake enques received command lines, selects a free worker for each,
+and once a worker is found, dispatches it with the following command.
+
+    gxpc e --tid hogehoge --keep_connection 0 <command>
+
+This command line will add a process to the existing task 'hogehoge'
+(created in the beginning) and immediately closes the connection
+between gxpc and gxp daemon. The net effect is the gxpc just invoked
+immediately terminates (thus release the memory resource).  The output
+is sent to the master process and the termination detected by the
+master process. When a command is terminated, xmake notifies the
+original requester (one of those mksh's) of it by sending the message
+to the connection and closing it.
+
+For handling large number of jobs, it is critical to represent
+outstanding (issued by GNU make but not finished) jobs as compactly as
+possible. To this end, gxpc for individual command lines immediately
+terminate as indicated above.  In addition, the waiting mksh will
+'become' (exec) a small shell command line whose only job is to
+receive the termination message (specifically, "if read x; then exit
+$x; else exit 126; fi"). Memory footprint for such a shell process
+seems 200KB - 300KB.
+
+"""
+
+
+dbg=0
+
+def Es(s):
+    while 1:
+        try:
+            os.write(2, s)
+            break
+        except OSError,e:
+            if e.args[0] != errno.EINTR: raise
+
+def Ws(s):
+    while 1:
+        try:
+            os.write(1, s)
+            break
+        except OSError,e:
+            if e.args[0] != errno.EINTR: raise
+
+class xmake_cmd_opts(opt2.cmd_opts):
+    def __init__(self):
+        #             (type, default)
+        # types supported
+        #   s : string
+        #   i : int
+        #   f : float
+        #   l : list of strings
+        #   None : flag
+        opt2.cmd_opts.__init__(self)
+        # log file
+        self.log      = ("s", "xmake.log")
+        #
+        self.work_db_class = ("s", "sqlite3")
+        # state file directory
+        self.state_dir = ("s", "./gxp_make_state")
+        # state file 
+        self.state    = ("s", "index.html")
+        # parallelism file
+        self.parallelism_gpl = ("s", "parallelism.gpl")
+        self.parallelism_dat = ("s", "parallelism.txt")
+        self.parallelism_terminal = ("s", "png")
+        self.parallelism_img = ("s", "parallelism.png")
+        self.parallelism_err = ("s", "parallelism.err")
+        # rss
+        self.rss_gpl = ("s", "rss.gpl")
+        self.rss_dat = ("s", "rss.txt")
+        self.rss_terminal = ("s", "png")
+        self.rss_img = ("s", "rss.png")
+        self.rss_err = ("s", "rss.err")
+        # load avg
+        self.loadavg_gpl = ("s", "loadavg.gpl")
+        self.loadavg_dat = ("s", "loadavg.txt")
+        self.loadavg_terminal = ("s", "png")
+        self.loadavg_img = ("s", "loadavg.png")
+        self.loadavg_err = ("s", "loadavg.err")
+
+        self.work_db = ("s", "work.db")
+        self.shine_file = ("s", "shine")
+        self.local_exec_cmd = ("s", None) 
+        #
+        self.conf = ("s*", [ "~/.gxpc_make.conf", "~/.gxp_make.conf",
+                             "gxpc_make.conf", "gxp_make.conf" ])
+        #
+        self.update_interval_1 = ("f", 2.0)
+        self.update_interval_2 = ("f", 20.0)
+        self.fast_update_period = ("f", 10.0)
+        self.refresh_interval = ("i", 60)
+        self.time_limit = ("s", None)
+        # this apepars fragile
+        # self.ping_timeout = ("f", 100.0)
+        # self.ping_interval = ("f", 30.0)
+        self.ping_timeout = ("f", float("inf"))
+        self.ping_interval = ("f", float("inf"))
+        
+        self.no_dispatch_after = ("i", None)
+        self.interrupt_at = ("i", None)
+        self.exit_status_worker_died = ("i", 121)
+        self.exit_status_worker_left = ("i", 122)
+        self.exit_status_no_throw = ("i", 123)
+        self.exit_status_interrupted = ("i", 124)
+        self.exit_status_connect_failed = ("i", 125)
+        self.exit_status_server_died = ("i", 126)
+        self.ctl = (None, 0)
+        # in case you want to run GNU make with a different name
+        self.make     = ("s", "make")
+        self.make_envs = ("s", None)
+        self.gxpc     = ("s", None)
+        self.qlen     = ("i", 10000)
+        self.sem      = ("s*", [])
+        self.emulate  = (None, 0)
+        self.help     = (None, 0)
+        self.h        = "help"
+        self.n        = "emulate"
+
+    def postcheck(self):
+        # self.time_limit is like "a:b", it is treated as if
+        # --no_dispatch_after a and --interrupt_at b are given
+        if self.time_limit is not None:
+            # parse time_limit (like 30:60) and set
+            # no_dispatch_after = 30 and interrupt_at = 60
+            limits = string.split(self.time_limit, ":", 1)
+            if len(limits) == 1:
+                [ no_dispatch_after_s ] = limits
+                interrupt_at_s = ""
+            else:
+                [ no_dispatch_after_s, interrupt_at_s ] = limits
+            if no_dispatch_after_s == "":
+                no_dispatch_after = None # omitted. infty
+            else:
+                no_dispatch_after = self.safe_atof(no_dispatch_after_s, -1)
+                if no_dispatch_after == -1:
+                    Es("xmake: invalid time limit (%s)\n" % self.time_limit)
+                    return -1
+            if interrupt_at_s == "":
+                interrupt_at = None
+            else:
+                interrupt_at = self.safe_atof(interrupt_at_s, -1)
+                if interrupt_at == -1:
+                    Es("xmake: invalid time limit (%s)\n" % self.time_limit)
+                    return -1
+            # now we have no_dispatch_after and interrupt_at (floats)
+            if self.no_dispatch_after is None:
+                self.no_dispatch_after = no_dispatch_after
+            if self.interrupt_at is None:
+                self.interrupt_at = interrupt_at
+        if self.ping_timeout < self.ping_interval + 10.0:
+            Es(("xmake: ping_timeout %.3f must be >= "
+                "ping_interval (%.3f) + 10, set to it"
+                % (self.ping_timeout, self.ping_interval)))
+            self.ping_timeout = self.ping_interval + 10.0
+        if self.gxpc is None:
+            gxp_dir = os.environ.get("GXP_DIR")
+            if gxp_dir is None:
+                Es(("xmake: use --gxpc to speficy the full path of gxpc"
+                    " or set GXP_DIR environment variable\n"))
+                return -1
+            else:
+                self.gxpc = os.path.join(gxp_dir, "gxpc")
+        
+    def usage(self):
+        u = r"""usage:
+    gxpc make <GNU make options> [ -- <gxpc make options> ]
+
+GNU make options are whatever options GNU make supports.
+gxpc make options:
+
+  --emulate / -n :
+      pretend all commands finished successfully. useful to generate
+      and see state html file.
+  --state_dir DIR :
+      specify directory where state.html and assocated files are written
+      (including xmake.log). created if not exist. default : ./gxp_make_state
+  --conf FILE :
+      read FILE as the config file, in addition to ~/.gxpc_make.conf and
+      gxpc_make.conf in the current dir.
+  --time_limit soft[:hard]
+      soft specifies the time when make stops dispatching jobs. after this time,
+      it only waits for outstanding workss to finish, and then throws away all
+      jobs (not dispatched) with exit status 124, or what you specify with --exit_status_time_limit. hard specifies the time when
+      make kills (with SIGINT) works in progress.
+  --make_env VAR:VAR:...:VAR
+      specify the list of environment variables that should be passed from the
+      root host to individual commands. if your makefile uses a global export=...
+      clause or a job-specific export=... clause, include the name of variables 
+      here. otherwise your job will fail to see those variables and probably fail.
+  --state FILE :
+      write job/worker status to FILE (default: "gxp_make_state/index.html")
+  --log FILE :
+      write log to FILE (default: "gxp_make_state/xmake.log")
+  --update_interval_1 T1 :
+      specify the inteval at which status file is updated in seconds
+      (default 2.0).
+  --update_interval_2 T2 :
+      specify the inteval at which status file is updated in seconds
+      (default 20.0). more precisely, status file gets updated either when
+      (1) T1 seconds has passed since the last update and there are at
+      least 10 state changes not reflected in the file, or
+      (2) T2 seconds has passed since the last update and there is at
+      least 1 state change not reflected in the file.
+  --refresh_interval T :
+      specify the interval at which status file is automatically
+      reloaded by the browser (<meta http-equiv="refresh" content=T>
+      gets inserted in the status file).
+  --make_link_limit T :
+      specify the maximum time (in sec) the gxpc make is allowed to spend 
+      to make links from the state html file. specifying 0.0 completely
+      supresses link generation. default is 10.0. gxpc make normally tries 
+      to make a <a hre=...> link from the status file to files that seem 
+      to exist, but this sometimes takes long time (to check if each string 
+      that appears a file name is actually a path name of an existing file). 
+      if gxpc ever takes more than this value to generate a status file,
+      it stops making links from that point.
+  --make GNU_MAKE_PATH :
+      specify the path of GNU make (default : "make")
+  --gxpc GXPC_PATH :
+      specify the path of gxpc (default : "gxpc")
+  --qlen N : 
+      specify the backlog of the socket the scheduler listens
+      (default : 10000). you might want to increase this value
+      when there are more than 10000 workers.
+  --exit_status_worker_dead S
+      specifies the exit status, perceived by GNU make, for jobs that
+      are not completed because the worker is dead. default is 123.
+  --exit_status_time_limit S
+      specifies the exit status, perceived by GNU make, for jobs that
+      are not executed because time_limit (specified by --time_limit option)
+      reached. default is 124.
+  --exit_status_connect_failed S
+      specifies the exit status, perceived by GNU make, for jobs that
+      failed to executed because it somehow could not connect to xmake
+      (it should not normally happen). default is 125.
+  --exit_status_server_dead S
+      specifies the exit status, perceived by GNU make, for jobs that
+      failed to complete because xmake somehow died (it should not
+      normally happen). default is 126.
+
+"""
+        return u
+
+class man_state:
+    active = "0_active"
+    leaving = "1_leaving"
+    leave_now = "2_leave_now"
+    gone = "3_gone"
+
+class Man:
+    """
+    a worker, or a man
+    """
+    def __init__(self, work_idx, name, capacity, cur_time):
+        self.work_idx = work_idx # serial number
+        self.name = name         # name
+        self.capacity = capacity
+        self.state = man_state.active
+        # created time
+        self.create_time = cur_time
+        # last time at which I heard from him
+        self.time_last_heartbeat = cur_time
+        self.runs_running = {} # run_idx -> run
+        self.n_runs = 0
+
+    def prio(self):
+        return -self.n_runs
+
+    def set_heartbeat(self, cur_time):
+        self.time_last_heartbeat = cur_time
+
+class id_counter:
+    def __init__(self):
+        self.c = 0
+    def get(self):
+        c = self.c
+        self.c = c + 1
+        return c
+
+class id_generator:
+    """
+    usage :
+    g = id_generator()
+    idx = g.run_counter.get()
+    rid = g.run_template % idx
+    """
+    def __init__(self):
+        self.work_counter = id_counter()
+
+        self.run_counter = id_counter()
+        self.run_template = "run_%d"
+        self.run_pat = re.compile("run_(?P<idx>\d+)")
+
+        self.ping = "ping"
+        self.join = "join"
+        self.leave = "leave"
+        self.leave_now = "leave_now"
+
+    def get_run_idx(self, s):
+        """
+        s : string like ping_123
+        return -> 123
+        """
+        m = self.run_pat.match(s)
+        return int(m.group("idx"))
+
+# terminology
+#
+# a run, and a work.
+#
+# - A work consists of one or more runs (usually one).
+#
+# A work is whatever is invoked by a GNU make. That is, a single
+# command in your Makefile corresponds to a job.
+# 
+# A job is dispatched to a node and this event makes a single run.
+# A job is usually finished by a single run, but if a run fails for
+# some reason, there may be more than two runs for a single job.
+#
+
+class run_status:
+    queued = "queued"
+    running = "running"
+    finished = "finished"
+    worker_died = "worker_died"
+    worker_left = "worker_left"
+    no_throw = "no_throw"
+    interrupted = "interrupted"
+    
+class Run:
+    def init(self, work, run_idx, io_dir):
+        self.work_idx = work.work_idx # work idx
+        self.run_idx = run_idx   # the parent work this run is for
+        self.status = run_status.queued
+        self.pid = None
+        self.exit_status = None
+        self.termsig = None
+        self.man_name = None         # set by find_matches (Man object)
+        self.time_start = None       # set by the first shot's shot
+        self.time_end = None
+        self.time_since_start = None
+        self.etime = None               # elapsed time
+        self.utime = None               # user time
+        self.stime = None               # sys time
+        self.minflt = None              # minor faults
+        self.majflt = None              # major faults
+        self.io = ""
+        self.io_dir = io_dir
+        self.io_file = None
+        self.rusage = ""                # currently not used
+        # volatile (not persistent) fields. not put in database
+        self.work = work
+        self.man = None
+        self.io_wp = None
+        self.hold_limit = float("inf")
+        return self
+
+    def save_to_tuple(self):
+        """
+        return tuple to be put in database
+        """
+        # self.rusage
+        # when you chane code below, make sure you also
+        # change (1) restore_from_tuple, (2) create table runs
+        # below, (3) insert into runs below, 
+        # and (4) update runs statement below
+        return (self.work_idx,
+                self.run_idx,
+                self.status,
+                self.pid,
+                self.exit_status,
+                self.termsig,
+                self.man_name,
+                self.time_start,
+                self.time_end,
+                self.time_since_start,
+                self.etime,
+                self.utime,
+                self.stime,
+                self.minflt,
+                self.majflt,
+                self.io,
+                self.io_dir,
+                self.io_file)
+
+    def restore_from_tuple(self, tup):
+        """
+        recover run object from the tuple retrieved
+        from database. we restore work_idx field, but
+        not work/server object.
+        """
+        # self.rusage,self.output
+        (self.work_idx,
+         self.run_idx,
+         self.status,
+         self.pid,
+         self.exit_status,
+         self.termsig,
+         self.man_name,
+         self.time_start,
+         self.time_end,
+         self.time_since_start,
+         self.etime,
+         self.utime,
+         self.stime,
+         self.minflt,
+         self.majflt,
+         self.io,
+         self.io_dir,
+         self.io_file) = tup
+        return self
+
+    def start(self, cur_time, man, emulate):
+        """
+        send gxpc command to the target man
+        """
+        rid = self.work.server.id_gen.run_template % self.run_idx
+        work = self.work
+        server = work.server
+        if emulate:
+            cmd = "exit 0"
+        else:
+            cmd = work.cmd
+        # build gxpc command line
+        cmdx = [ server.opts.gxpc, "--withall", "--save_session", "0",
+                 "e", "-g", self.man_name, "--tid", server.tid,
+                 "--rid", rid, "--keep_connection", "0",
+                 "--dir", work.cwd ]
+        for var_val in work.envs:
+            cmdx.append("--export")
+            cmdx.append(var_val)
+        cmdx.append(cmd)
+        if server.logfp:
+            server.LOG("dispatching job to %s (%s)\n" % (self.man_name, cmdx))
+        # really run process
+        self.time_start = cur_time
+        self.status = run_status.running
+        # record this run is running, by this man
+        self.man = man
+        server.runs_running[self.run_idx] = self
+        man.runs_running[self.run_idx] = self
+        man.n_runs = man.n_runs + 1
+        # update database
+        server.works.update_run(self)
+        pid = os.fork()
+        if pid == 0:
+            server.close_fds()
+            os.execvp(cmdx[0], cmdx)
+        else:
+            self.pid = pid
+
+    def sync(self, cur_time):
+        if self.io_wp:
+            self.io_wp.flush()
+        self.time_since_start = cur_time - self.time_start
+        self.work.server.works.update_run(self)
+
+    def add_io(self, payload):
+        if self.io_file:
+            assert self.io_wp
+            self.io_wp.write(payload)
+        else:
+            io = self.io + payload
+            max_inline_io = 50
+            if len(io) > max_inline_io:
+                self.io_file = "run_%d" % self.run_idx
+                io_file = os.path.join(self.io_dir, self.io_file)
+                self.io_wp = open(io_file, "wb")
+                self.io_wp.write(io)
+                self.io = io[:max_inline_io] + "..."
+            else:
+                self.io = io
+
+    def finish(self, cur_time,
+               status, exit_status, termsig, etime, rusage):
+        """
+        server : xmake_server object
+        cur_time : current time (float)
+        status : one of run_status.xxx (string)
+        wait_status : status as returned by wait syscall (int)
+        etime : elapsed time on the worker returned by gxpc e (float)
+        rusage : rusage as returned by getrusage (touple)
+        """
+        work = self.work
+        server = work.server
+        self.time_end = cur_time
+        if self.time_start is not None:
+            # may be none if the job has not started
+            self.time_since_start = cur_time - self.time_start
+        self.status = status
+        self.exit_status = exit_status
+        self.termsig = termsig
+        self.etime = etime
+        if rusage:
+            self.utime = rusage[0]
+            self.stime = rusage[1]
+            self.minflt = rusage[6]
+            self.majflt = rusage[7]
+            self.rusage = string.join(map(str, rusage), ":")
+        man = self.man
+        if man:
+            # delete records indicating run was running
+            del server.runs_running[self.run_idx]
+            del man.runs_running[self.run_idx]
+            self.man = None
+            if self.io_wp:
+                self.io_wp.close()
+            # ------ update database -------
+            server.works.update_run(self)
+            if man.state == man_state.active:
+                # this man is now free
+                server.men_free.append((man.prio(), man))
+            if server.logfp:
+                server.LOG("man %s in state %s finished a run\n"
+                           % (man.name, man.state))
+        else:
+            # this happens when we reach the time limit and this work
+            # must be aborted before dispatched to any man
+            assert (status == run_status.no_throw
+                    or status == run_status.interrupted), status
+        work.finish_or_retry(status, exit_status, termsig)
+
+class work_attribute_parser:
+    def __init__(self):
+        # begin with non-quotes up to a whitespace or a quote
+        non_quoted_sequence = r"""([^\s'"]|\\'\\")+""" # '
+        # begin with a single quote, up to a matching quote
+        single_quoted_sequence = r"""'([^']|\\')*'"""
+        # begin with a double quote, up to a matching double quote
+        double_quoted_sequence = r'''"([^"]|\\")*"'''
+        # any of the above three kinds
+        any_sequence = ("(%s|%s|%s)" % (non_quoted_sequence, 
+                                        single_quoted_sequence, 
+                                        double_quoted_sequence))
+        # sequence of it (shell command line)
+        any_sequences = r"""\s*(%s*)""" % any_sequence
+        var_val = "([A-Za-z_]+)=(%s)" % any_sequences
+        self.var_val_pat = re.compile(var_val, re.DOTALL)
+        self.attr_pat = re.compile("GXPC?_?MAKE:\s*(.*)", re.DOTALL)
+        # usage:
+        # p = work_attribute_parser()
+        # m = p.attr_pat(command_line)
+        # if m: 
+        #     for var_val in p.var_val_pat.findall(m.group(1)):
+        #         m = p.var_val_pat(var_val)
+
+
+class Work:
+    def init(self, work_idx, cmd, cwd, envs, cur_time, server, conn):
+        """
+        cmd : command line (string)
+        cwd  : working directory of the command (string)
+        envs : environment that must be passed to the command
+        time_req : time requested
+        conn : connection to the client (socket object)
+        """
+        self.work_idx = work_idx
+        self.cmd = cmd
+        self.cwd = cwd
+        self.envs = envs + [ ("GXP_MAKE_WORK_IDX=%d" % work_idx) ]
+        self.time_req = cur_time
+        # volatile fields
+        self.server = server
+        self.conn = conn
+        self.attrs = self.parse_attributes(cmd)
+        return self
+
+    def save_to_tuple(self):
+        # this does not guarantee we can always restore the original
+        # environment list from database, but we do not care because
+        # such works must have been finished
+        envs = string.join(self.envs, ",")
+        return (self.work_idx, self.cmd, self.cwd, envs, self.time_req)
+
+    def restore_from_tuple(self, tup):
+        (self.work_idx, 
+         self.cmd,
+         self.cwd,
+         envs,
+         self.time_req) = tup
+        self.envs = string.split(envs, ",")
+        return self
+        
+    def parse_attributes(self, cmd):
+        """
+        parse GXPMAKE: on=xxx wait=%s ... attributes.
+        return a dictionary mapping attribute keys to
+        their values.
+        todo : do it only once per work
+        """
+        A = {}                  # key : value
+        p = self.server.work_attr_parser
+        m = p.attr_pat.search(cmd)
+        if m is None: return A
+        var_vals = p.var_val_pat.findall(m.group(1))
+        # Es("var_vals = %s\n" % var_vals)
+        for var_val in var_vals:
+            var = string.strip(var_val[0])
+            val = string.strip(var_val[1])
+            A[var] = val
+        return A
+
+    def finish_or_retry(self, status, exit_status, termsig):
+        if status == run_status.worker_died \
+               or status == run_status.worker_left \
+               or exit_status == 115:
+            self.retry()
+        else:
+            self.send_exit_status(exit_status, termsig)
+
+    def make_run(self):
+        run_idx = self.server.id_gen.run_counter.get()
+        run = Run().init(self, run_idx, self.server.opts.state_dir)
+        self.server.runs_todo.append(run)
+        self.server.works.add_run(self.work_idx, run)
+
+    def retry(self):
+        # retry
+        msg = ("work '%s' will be retried\n" % self.cmd)
+        # Es("xmake: %s" % msg)
+        if self.server.logfp: self.server.LOG(msg)
+        self.make_run()
+
+    def send_exit_status(self, exit_status, termsig):
+        """
+        todo: consider killing the process by termsig
+        """
+        assert self.conn is not None
+        msg = "%d\n" % exit_status
+        try:
+            self.conn.send(msg)
+            self.conn.close()
+        except socket.error,e:
+            if e.args[0] == errno.EPIPE:
+                Es("xmake: could not send result to client: %s\n"
+                   % (e.args,))
+            else:
+                raise
+        
+class xmake_server_conf:
+    def __init__(self):
+        self.cpu_count = []
+        
+    def warn_deprecated_files(self):
+        f = os.path.expanduser("~/gxpc_make.conf")
+        if os.path.exists(f):
+            Es(r"""xmake: warning: config file ~/gxpc_make.conf is deprecated.
+New default config files are ~/.gxpc_make.conf and gxpc_make.conf in the
+current dir. Both are read (if exist) and the latter overrides the former.
+""")
+        
+    def parse_files(self, conf_files):
+        """
+        parse config files.
+        use only the LAST file that exist in conf_files.
+        if the user supplies one, use it.
+        """
+        self.warn_deprecated_files()
+        conf_files = conf_files[:]
+        conf_files.reverse()
+        for f in conf_files:
+            if self.parse(os.path.expanduser(f)) == 0:
+                return
+
+    def parse(self, conf_file):
+        if not os.path.exists(conf_file): return -1
+        try:
+            fp = open(conf_file, "rb")
+        except IOError,e:
+            Es("xmake: failed to open %s %s\n" % (conf_file, e.args))
+            return
+        for line in fp.readlines():
+            line = string.strip(line)
+            if line == "" or line[0] == "#": continue
+            m = re.match("cpu\s+([^\s]+)\s+(\d+)", line)
+            if m:
+                host = m.group(1)
+                n = int(m.group(2))
+                self.cpu_count.append((host, n))
+                continue
+        fp.close()
+        return 0
+
+    def get_cpu_count(self, host):
+        for regexp,n in self.cpu_count:
+            if re.match(regexp, host):
+                return n
+        return 1
+
+class ping_men:
+    def __init__(self, server, interval):
+        self.server = server
+        self.interval = interval
+        self.pid = None
+        self.time_last_ping = 0
+
+    def ping_all_men(self, cur_time):
+        server = self.server
+        if self.time_last_ping + self.interval >= cur_time:
+            return 0
+        if server.logfp:
+            server.LOG("periodic ping to all workers\n")
+        if self.pid is not None:
+            if server.logfp:
+                server.LOG("ping (pid = %d) taking so much time,"
+                           " trying to kill it\n" % self.pid)
+            try:
+                os.kill(self.pid, signal.SIGKILL)
+            except OSError,e:
+                if server.logfp:
+                    server.LOG("os.kill: %s\n" % (e.args,))
+            return 0
+        rid = server.id_gen.ping
+        cmdx = [server.opts.gxpc, "--withall", "--save_session", "0",
+                "e", "--tid", server.tid,
+                "--rid", rid, "--keep_connection", "0", ":" ]
+        if server.logfp:
+            server.LOG("ping by '%s'\n" % string.join(cmdx, " "))
+        pid = os.fork()
+        if pid == 0:
+            server.close_fds()
+            os.execvp(cmdx[0], cmdx)
+        self.pid = pid             # set to None in handle_child_death
+        self.time_last_ping = cur_time
+        return 1
+
+class resource_usage:
+    def __init__(self):
+        self.r = None
+        import resource
+        self.getrusage = resource.getrusage
+        self.RUSAGE_CHILDREN = resource.RUSAGE_CHILDREN
+
+    def get_child_rusage(self):
+        r = self.getrusage(self.RUSAGE_CHILDREN)
+        if self.r is None:
+            self.r = (0,) * len(r)
+        dr = []
+        for i in range(len(self.r)):
+            dr.append(r[i] - self.r[i])
+        self.r = r
+        return dr
+
+class work_db_base:
+    def __init__(self, dire, work_db):
+        bomb()
+    def add_work(self, work):
+        bomb()
+    def add_run(self, work_idx, run):
+        bomb()
+    def update_run(self, run):
+        bomb()
+    def add_io(self, run_idx, payload):
+        bomb()
+    def commit(self):
+        bomb()
+    def __len__(self):
+        bomb()
+    def __iter__(self):
+        bomb()
+
+        
+class work_db_mem(work_db_base):
+    def __init__(self, dire, work_db):
+        # these two variables are to indicate
+        # no links should be generated
+        self.dire = None
+        self.work_db = None
+        self.works = []         # list of works
+        self.runs = {}          # run idx -> run
+        self.work_runs = {}     # work idx -> list of run_idxs
+
+    def add_work(self, work):
+        """
+        work : Work object
+        """
+        self.works.append(work)
+        self.work_runs[work.work_idx] = []
+
+    def add_run(self, work_idx, run):
+        """
+        work_idx : index of work the run is associated with
+        run : run object
+        """
+        self.runs[run.run_idx] = run
+        self.work_runs[work_idx + 0].append(run)
+
+    def update_run(self, run):
+        """
+        record the fact that run_idx is updated
+        """
+        pass
+
+    def add_io(self, run_idx, payload):
+        pass
+
+    def __len__(self):
+        return len(self.works)
+
+    def __iter__(self):
+        for work in self.works:
+            runs = self.work_runs[w.work_idx]
+            yield (work, runs)
+
+    def commit(self):
+        pass
+
+    def list_jobs(self, title):
+        if 0: yield
+
+class work_db_sqlite3_base(work_db_base):
+    def mk_sqlite3_db(self):
+        import sqlite3
+        self.n_works = 0
+        if self.work_db:
+            db = os.path.join(self.dire, self.work_db)
+            if os.path.exists(db):
+                os.remove(db)
+        else:
+            db = ":memory:"
+        conn = sqlite3.connect(":memory:")
+        conn.execute("""
+create table works (work_idx integer, cmd text, cwd text, env text, time_req real)
+""")
+        conn.execute("""
+create table runs (work_idx integer, run_idx integer, status text, 
+                   pid integer, 
+                   exit_status integer, termsig integer, man_name text,
+                   time_start real, time_end real, time_since_start real,
+                   etime real, utime real, stime real,
+                   minflt integer, majflt integer,
+                   io text, io_dir text, io_file text)
+""")
+        return conn
+
+    def add_work(self, work):
+        """
+        work : Work object
+        """
+        conn = self.conn
+        conn.execute("insert into works values (?, ?, ?, ?, ?)", 
+                     work.save_to_tuple())
+        self.n_works = self.n_works + 1
+
+    def add_run(self, work_idx, run):
+        """
+        work_idx : index of work the run is associated with
+        run : run object
+        """
+        conn = self.conn
+        conn.execute("""
+insert into runs values (?, ?, ?, ?, ?,  ?, ?, ?, ?, ?,  ?, ?, ?, ?, ?,  ?, ?, ?)
+""", run.save_to_tuple())
+
+    def update_run(self, run):
+        """
+        record the fact that run_idx is updated
+        """
+        conn = self.conn
+        conn.execute("""
+update runs set work_idx = ?, run_idx = ?, status = ?, pid = ?, exit_status = ?, 
+                termsig = ?, man_name = ?,
+                time_start = ?, time_end = ?, time_since_start = ?,
+                etime = ?, utime = ?, stime = ?, minflt = ?, majflt = ?,
+                io = ?, io_dir = ?, io_file = ?
+            where run_idx = ?
+""", (run.save_to_tuple() + (run.run_idx,)))
+
+    def add_io(self, run_idx, payload):
+        pass
+
+    def __len__(self):
+        return self.n_works
+
+    def list_jobs_aux(self, sql):
+        conn = self.conn
+        c = conn.execute(sql)
+        work = None
+        n_works = 0
+        for row in c:
+            idx = row[0]
+            w_tuple = (idx,) + row[1:5]  # UGLY
+            r_tuple = (idx,) + row[5:]   # UGLY
+            if work is None or work.work_idx != idx:
+                if work:
+                    yield (work,runs)
+                    n_works = n_works + 1
+                    if n_works == 100: break
+                work = Work().restore_from_tuple(w_tuple)
+                runs = []
+            runs.append(Run().restore_from_tuple(r_tuple))
+
+    def list_jobs(self, title):
+        if title == "Long":
+            return self.list_jobs_aux("select * from (select work_idx from (select * from runs group by work_idx) order by time_since_start desc) natural join works natural join runs")
+        elif title == "Failed":
+            return self.list_jobs_aux("""select * from (select work_idx from (select * from runs group by work_idx) where status != "queued" and status != "running" and exit_status != 0) natural join works natural join runs""")
+        elif title == "Recent":
+            # where status != "queued" 
+            return self.list_jobs_aux("select * from (select work_idx from (select * from runs group by work_idx) order by work_idx desc) natural join works natural join runs")
+        else:
+            assert 0, title
+
+    def commit(self):
+        self.conn.commit()
+
+class work_db_sqlite3(work_db_sqlite3_base):
+    def __init__(self, dire, work_db):
+        self.dire = dire
+        self.work_db = work_db
+        self.conn = self.mk_sqlite3_db()
+
+class work_db_sqlite3_mem(work_db_sqlite3_base):
+    def __init__(self, dire, work_db):
+        self.dire = None
+        self.work_db = None
+        self.conn = self.mk_sqlite3_db()
+
+def mk_work_db(work_db_class, dire, work_db):
+    # work_db_class = "mem"
+    # work_db_class = "sqlite3_mem"
+    # work_db_class = "sqlite3"
+    g = globals()
+    cls = g["work_db_%s" % work_db_class]
+    return cls(dire, work_db)
+
+class work_table_generator:
+    def __init__(self, works):
+        self.db = works
+        self.works_per_page = 500
+
+    def gen_header_row(self, wp):
+        wp.write("<tr>"
+                 "<td>idx</td>"
+                 "<td>cmd</td>"
+                 "<td>queued</td>"
+                 "<td>status</td>"
+                 "<td>worker</td>"
+                 "<td>start time</td>"
+                 "<td>end time</td>"
+                 "<td>time since started</td>"
+                 "<td>elapsed time</td>"
+                 "<td>user time</td>"
+                 "<td>system time</td>"
+                 "<td>minor faults</td>"
+                 "<td>major faults</td>"
+                 "<td>io</td>"
+                 "<td>io file</td>"
+                 "</tr>\n")
+
+    def pr_float(self, f):
+        if f is None:
+            return "<br>"
+        else:
+            return "%.3f" % f
+
+    def pr_int(self, i):
+        if i is None:
+            return "<br>"
+        else:
+            return "%d" % i
+
+    def pr_str(self, s):
+        if s is None:
+            return "<br>"
+        else:
+            return s
+
+    def pr_str_safe(self, s):
+        s = string.replace(s, "<", "&lt;")
+        s = string.replace(s, ">", "&gt;")
+        s = string.replace(s, "\n", "<br>")
+        if s == "": s = "<br>"
+        return s
+
+    def pr_link(self, s):
+        if s is None:
+            return "<br>"
+        else:
+            return '<a href="%s">%s</a>' % (s, s)
+
+    def pr_man(self, s):
+        if s is None:
+            return "<br>"
+        else:
+            idx = string.index(s, "-")
+            if idx == -1:
+                return s
+            else:
+                return s[:idx]
+
+    def pr_run_class(self, status, exit_status, termsig):
+        if status == run_status.finished:
+            if exit_status is not None:
+                if exit_status == 0:
+                    return "job_success"
+                else:
+                    return "job_failed"
+            elif termsig is not None:
+                return "job_killed"
+            else:
+                assert 0, (status, exit_status, termsig)
+        else:
+            return "job_%s" % status
+
+    def pr_status(self, status, exit_status, termsig):
+        if status == run_status.finished:
+            if exit_status is not None:
+                return "exit %d" % exit_status
+            elif termsig is not None:
+                return "killed %d" % termsig
+            else:
+                assert 0, (status, exit_status, termsig)
+        else:
+            return status
+
+    def gen_row(self, work, runs, wp):
+        n_runs = len(runs)
+        i = 0
+        for run in runs:
+            wp.write("<tr>")
+            if i == 0:
+                # generate 'work' columns
+                wp.write("<td rowspan=%d>%d</td>"
+                         "<td rowspan=%d>%s</td>"
+                         "<td rowspan=%d>%.3f</td>" %
+                         (n_runs, work.work_idx, 
+                          n_runs, self.pr_str_safe(work.cmd), 
+                          n_runs, work.time_req))
+            # generate 'run' columns
+            wp.write('<td class="%s">%s</td>'
+                     '<td>%s</td>'
+                     '<td>%s</td>'
+                     '<td>%s</td>'
+                     '<td>%s</td>'
+                     '<td>%s</td>'
+                     '<td>%s</td>'
+                     '<td>%s</td>'
+                     '<td>%s</td>'
+                     '<td>%s</td>'
+                     '<td>%s</td>'
+                     '<td>%s</td>' %
+                     (self.pr_run_class(run.status, run.exit_status, run.termsig),
+                      self.pr_status(run.status, run.exit_status, run.termsig),
+                      self.pr_man(run.man_name),
+                      self.pr_float(run.time_start),
+                      self.pr_float(run.time_end),
+                      self.pr_float(run.time_since_start),
+                      self.pr_float(run.etime),
+                      self.pr_float(run.utime),
+                      self.pr_float(run.stime),
+                      self.pr_int(run.minflt),
+                      self.pr_int(run.majflt),
+                      self.pr_str_safe(run.io),
+                      self.pr_link(run.io_file)))
+            wp.write("</tr>\n")
+            i = i + 1
+
+    def gen_table(self, wp, section_title):
+        wp.write(r'''<a name="%s Jobs">
+<h1>%s Jobs</h1>
+<a href="#">page top</a><br><br>
+<table border=1>
+''' % (section_title, section_title))
+        self.gen_header_row(wp)
+        for work,runs in self.db.list_jobs(section_title):
+            self.gen_row(work, runs, wp)
+        wp.write("""</table>""")
+
+    def gen_tables(self, wp):
+        self.db.commit()
+        self.gen_table(wp, "Failed")
+        self.gen_table(wp, "Long")
+        self.gen_table(wp, "Recent")
+
+
+class men_table_generator:
+    def __init__(self, server, men):
+        self.server = server
+        self.men = men
+
+    def pr_man_class(self, man):
+        if len(man.runs_running) == 0:
+            return "man_free"
+        else:
+            return "man_%s" % man.state
+
+    def sanitize_cmd(self, cmd):
+        cmd = string.replace(cmd, "<", "&lt;")
+        cmd = string.replace(cmd, ">", "&gt;")
+        return cmd
+
+    def gen_table(self, wp):
+        """
+        generate worker state
+        """
+        men = self.server.men.items()
+        men.sort()
+        wp.write(r'''<a name="Workers">
+<h1>Workers</h1>
+<a href="#">page top</a><br><br>
+last_ping_time = %.3f<br>
+<table>
+<tr><td>name</td><td>jobs</td><td>last heard</td><td>state</td></tr>
+''' % self.server.pinger.time_last_ping)
+
+        for name,man in men:
+            wp.write("""<tr>""")
+            if len(man.runs_running) == 0:
+                cmds = [ "-" ]
+            else:
+                cmds = []
+                for run in man.runs_running.values():
+                    cmds.append(self.sanitize_cmd(run.work.cmd))
+            i = 0
+            rowspan = len(cmds)
+            for cmd in cmds:
+                wp.write("""<tr>""")
+                if i == 0:
+                    wp.write("""<td class="%s" rowspan=%d>%s</td>"""
+                             """<td rowspan=%d>%s</td>"""
+                             """<td rowspan=%d>%.3f</td>"""
+                             % (self.pr_man_class(man), rowspan, man.name, 
+                                rowspan, man.n_runs,
+                                rowspan, man.time_last_heartbeat))
+                wp.write("""<td>%s</td>""" % cmd)
+                wp.write("""</tr>\n""")
+                i = i + 1
+        wp.write("""</table>""")
+            
+
+class time_series_data:
+    def __init__(self, dire, dat):
+        self.dire = dire
+        self.file_dat = dat
+        self.last_x = 0.0
+        file_dat = os.path.join(dire, dat)
+        self.wp = open(file_dat, "wb")
+        self.wp.write("0.0 %f\n" % self.last_x)
+        
+    def add_x(self, t, x):
+        self.wp.write("%f %f\n" % (t, self.last_x))
+        self.wp.write("%f %f\n" % (t, x))
+        self.last_x = x
+
+    def add_dx(self, t, dx):
+        self.add_x(t, self.last_x + dx)
+
+    def sync(self):
+        self.wp.flush()
+
+    def close(self):
+        self.wp.close()
+        
+class time_series_plot_generator:
+    def __init__(self, server, ts, dire, gpl, img, err, term, style, ylabel):
+        self.server = server
+        self.ts = ts                    # time series data
+        self.dire = dire                # directory
+        self.gpl = gpl                  # gnuplot file name
+        self.img = img                  # output (image) file name
+        self.err = err                  # error file name
+        self.term = term                # terminal (e.g., "png")
+        self.style = style
+        self.ylabel = ylabel
+
+    def gen_plot(self):
+        # make sure the graph reflects current time
+        self.ts.add_dx(self.server.cur_time(), 0)
+        self.ts.sync()
+        gpl = os.path.join(self.dire, self.gpl)
+        err = os.path.join(self.dire, self.err)
+        gp = open(gpl, "wb")
+        gp.write("""set terminal %s
+set style fill solid
+set ylabel "%s"
+plot "%s" title "" with %s
+""" % (self.term, self.ylabel, self.ts.file_dat, self.style))
+        gp.close()
+        img_t = "%s.tmp" % self.img
+        cmd = "cd %s && gnuplot %s 2> %s > %s && mv %s %s" % \
+            (self.dire, self.gpl, self.err, img_t, img_t, self.img)
+        status = os.system(cmd)
+        fp = open(err, "rb")
+        msg = fp.read()
+        fp.close()
+        self.server.LOG("'%s' status = %s\n" % (cmd, status))
+        if err != "":
+            self.server.LOG("error :\n%s" % msg)
+        return status
+
+class html_generator:
+    def __init__(self, opts, server):
+        self.opts = opts
+        self.server = server
+        self.wgen = work_table_generator(server.works)
+        self.mgen = men_table_generator(server, server.men)
+        self.pgen = time_series_plot_generator(server,
+                                               server.parallelism,
+                                               opts.state_dir,
+                                               opts.parallelism_gpl,
+                                               opts.parallelism_img,
+                                               opts.parallelism_err,
+                                               opts.parallelism_terminal,
+                                               "boxes", "outstanding jobs")
+        self.rgen = time_series_plot_generator(server,
+                                               server.rss,
+                                               opts.state_dir,
+                                               opts.rss_gpl,
+                                               opts.rss_img,
+                                               opts.rss_err,
+                                               opts.rss_terminal,
+                                               'lines linewidth 3 linecolor rgb "blue"', "Resident Set Size (MB)")
+        self.lgen = time_series_plot_generator(server,
+                                               server.loadavg,
+                                               opts.state_dir,
+                                               opts.loadavg_gpl,
+                                               opts.loadavg_img,
+                                               opts.loadavg_err,
+                                               opts.loadavg_terminal,
+                                               'lines linewidth 3 linecolor rgb "yellow"', "Last 1 min. Load Average")
+    def gen_header(self, wp, finish):
+        if finish:
+            refresh_meta = ""
+        else:
+            refresh_meta = ('<meta http-equiv="refresh" content="%d"/>' % 
+                            self.opts.refresh_interval)
+        wp.write("""
+<html>
+<head>
+<meta http-equiv="content-type" content="text/html; charset=utf-8"/>
+%s
+<title>GXP make jobs and parallelism</title>
+""" % refresh_meta)
+        self.gen_style(wp)
+        wp.write("""</head>
+""")
+
+    def gen_style(self, wp):
+        wp.write(r"""<style>
+<!--
+h1 {
+  background-color:#ccc;
+}
+table {
+ margin:0px;
+ border-style:solid;
+ border-width:1px;
+}
+td {
+  margin:0px;
+  border-style:solid;
+  border-width:1px;
+}
+td.job_queued {
+  background-color:#fff;
+}
+td.job_running {
+  background-color:#ffc;
+}
+td.job_success {
+  background-color:#cff;
+}
+td.job_failed {
+  background-color:#ff8;
+}
+td.job_killed {
+  background-color:#ff4;
+}
+td.job_worker_died {
+  background-color:#c8c;
+}
+td.job_worker_left {
+  background-color:#c8f;
+}
+td.job_no_throw {
+  background-color:#f4f;
+}
+td.job_interrupted {
+  background-color:#f4c;
+}
+td.man_free {
+  background-color:#fff;
+}
+td.man_0_active {
+  background-color:#ffc;
+}
+td.man_1_leaving {
+  background-color:#ff4;
+}
+td.man_2_leave_now {
+  background-color:#c4f;
+}
+td.man_3_gone {
+  background-color:#c4c;
+}
+-->
+</style>
+
+<!-- you may have this file to overwrite default style -->
+<link rel="stylesheet" href="state.css" type="text/css"/>
+
+""")
+
+    def gen_section_toc(self, wp):
+        if self.server.works.work_db:
+            work_db = ('<li><a href="%s">all jobs in sqlite3 database</a>'
+                       % self.server.works.work_db)
+        else:
+            work_db = ""
+        wp.write('''
+<a name="Table of Contents">
+<h1>Contents</h1>
+<ul>
+<li><a href="#Parallelism">Parallelism</a>
+<li><a href="#RSS">RSS</a>
+<li><a href="#Load Average">Load Average</a>
+<li>Jobs
+<ul>
+  %s
+  <li><a href="#Failed Jobs">Failed Jobs</a>
+  <li><a href="#Long Jobs">Long Jobs</a>
+  <li><a href="#Recent Jobs">Recent Jobs</a>
+</ul>
+<li><a href="#Workers">Workers</a>
+</ul>
+''' % work_db)
+
+    def gen_section_basic(self, wp):
+        server = self.server
+        wp.write(r'''
+<a name="Basic info">
+<h1>Basic info</h1>
+<a href="#">page top</a><br><br>
+<table class="basic_info">
+<tr><td>command line</td><td>%s</td></tr>
+<tr><td>master hostname</td><td>%s</td></tr>
+<tr><td>pid</td><td>%s</td></tr>
+<tr><td>start time</td><td>%s</td></tr>
+<tr><td>elapsed time (sec)</td><td>%.2f</td></tr>
+<tr><td>waiting / total jobs</td><td>%d / %d</td></tr>
+<tr><td>free / total workers</td><td>%d / %d</td></tr>
+<tr><td>xmake args</td><td>%s</td></tr>
+<tr><td>make args</td><td>%s</td></tr>
+<tr><td>make pid</td><td>%s</td></tr>
+<tr><td>make status</td><td>%s</td></tr>
+<tr><td>socket</td><td>%s</td></tr>
+<tr><td>gxpc cmd</td><td>%s</td></tr>
+<tr><td>gxpc pid</td><td>%s</td></tr>
+<tr><td>gxpc tid</td><td>%s</td></tr>
+<tr><td>gxpc status</td><td>%s</td></tr>
+<tr><td>gxpc fd</td><td>%s</td></tr>
+<tr><td>gxpc io fd</td><td>%s</td></tr>
+</table>
+''' % (server.sys_argv,
+       server.hostname,
+       server.self_pid, 
+       time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(server.time_start)),
+       server.cur_time(),
+       len(server.runs_todo), len(server.works),
+       len(server.men_free), server.men_total_capacity(),
+       server.xmake_args, server.make_args, 
+       server.make_pid, server.make_status,
+       server.so_name, 
+       server.gxpc_cmd,
+       server.gxpc_pid, server.tid, server.gxpc_status,
+       server.gxpc_fd, server.gxpc_io_fd))
+        
+    def gen_section_graph(self, wp, section_title, gen_plot_time,
+                          gpl, dat, err, img):
+        opts = self.opts
+        wp.write('''
+<a name="%s">
+<h1>%s</h1>
+<a href="#">page top</a><br><br>
+<p>took %.3f sec to generate the graph.</a>
+<p>if the following image is broken, gnuplot may have gotten an error.</p>
+<ul>
+<li><a href="%s">gnuplot source</a>
+<li><a href="%s">gnuplot data</a>
+<li><a href="%s">gnuplot error</a>
+</ul>
+<a href="%s"><img src="%s" width=640></a><br>
+''' % (section_title, section_title, gen_plot_time, gpl, dat, err, img, img))
+
+    def gen_section_parallelism(self, wp, gen_plot_time):
+        opts = self.opts
+        self.gen_section_graph(wp, "Parallelism", gen_plot_time,
+                               opts.parallelism_gpl, opts.parallelism_dat,
+                               opts.parallelism_err, opts.parallelism_img)
+
+    def gen_section_rss(self, wp, gen_plot_time):
+        opts = self.opts
+        self.gen_section_graph(wp, "RSS", gen_plot_time,
+                               opts.rss_gpl, opts.rss_dat,
+                               opts.rss_err, opts.rss_img)
+
+    def gen_section_loadavg(self, wp, gen_plot_time):
+        opts = self.opts
+        self.gen_section_graph(wp, "Load Average", gen_plot_time,
+                               opts.loadavg_gpl, opts.loadavg_dat,
+                               opts.loadavg_err, opts.loadavg_img)
+
+
+    def gen_trailer(self, wp):
+        wp.write("""
+</body>
+</html>
+""")
+
+    def gen_section_works(self, wp):
+        self.wgen.gen_tables(wp)
+
+    def gen_section_men(self, wp):
+        self.mgen.gen_table(wp)
+
+    def generate(self, finished):
+        t0 = self.server.cur_time()
+        self.pgen.gen_plot()    # parallelism
+        t1 = self.server.cur_time()
+        self.rgen.gen_plot()    # rss
+        t2 = self.server.cur_time()
+        self.lgen.gen_plot()            # loadavg
+        t3 = self.server.cur_time()
+        filename = os.path.join(self.opts.state_dir, "index.html")
+        filename_t = os.path.join(self.opts.state_dir, "index.html.tmp")
+        wp = open(filename_t, "wb")
+        self.gen_header(wp, finished)
+        self.gen_section_toc(wp)
+        self.gen_section_basic(wp)
+        self.server.LOG("generate parallelism\n")
+        self.gen_section_parallelism(wp, t1 - t0)
+        self.server.LOG("generate rss\n")
+        self.gen_section_rss(wp, t2 - t1)
+        self.server.LOG("generate load avg\n")
+        self.gen_section_loadavg(wp, t3 - t2)
+        self.server.LOG("generate works\n")
+        self.gen_section_works(wp)
+        self.server.LOG("generate men\n")
+        self.gen_section_men(wp)
+        t4 = self.server.cur_time()
+        wp.write("<p>(took %.3f sec to generate)</p>" % (t4 - t0))
+        self.server.LOG("gen trailer\n")
+        self.gen_trailer(wp)
+        wp.close()
+        self.server.LOG("rename\n")
+        os.rename(filename_t, filename)
+
+
+class xmake_server:
+    """
+
+    a server that accepts a connection from mksh (which was probably
+    invoked by make), dispatches received command lines to free
+    workers, and receives the result.
+
+    """
+    def __init__(self):
+        # xmake_cmd_opts object
+        self.sys_argv = None
+        self.opts = None
+        # args passed through GNU make
+        self.make_args = None
+        # args this process takes (after '--')
+        self.xmake_args = None
+        # args persistent e takes (after '---')
+        self.e_args = None
+        # start time
+        self.time_start = None
+        # file object for the log
+        self.logfp = None
+        # gxp task id of everything
+        self.tid = None
+        # various idx generator
+        self.id_gen = id_generator()
+        # for e --persistent 1 ...,
+        # its command line, pid, exit status, pipe
+        self.gxpc_cmd = None
+        self.gxpc_pid = None
+        self.gxpc_status = None
+        self.gxpc_fd = None          # termination notification
+        self.gxpc_partial_msg = None    # incomplete line
+        self.gxpc_io_fd = None
+        # UNIX domain socket to accept connect from mksh
+        self.so = None
+        self.so_name = None             # so's path name
+        # rusage tracker
+        self.ru = resource_usage()
+        # sigchild handling
+        # a sig handler writes to child_wfd,
+        # and the main thread receives it from rfd
+        self.child_rfd = None
+        self.child_wfd = None
+        self.n_sigchld_called = 0
+        self.n_sigchild_written = None
+        self.n_sigchild_read = None
+        # self pid
+        self.self_pid = None
+        # pid of GNU make process
+        self.make_pid = None
+        self.make_status = None
+        # list of all works 
+        self.works = None               # work database
+        self.runs_todo = None           # runs to do
+        self.runs_running = None        # runs running
+        self.matches = None             # found mathces yet to dispatch
+        # dict of all men (man name -> man)
+        self.men = None
+        # list of free men
+        # multiple entries for multi-core men
+        self.men_free = None
+        # interrupted or not
+        self.interrupted = None
+        self.hostname = None
+        self.cleaning = 0
+        # record_state timing control
+        self.hgen = None
+        self.last_record_time = None
+        self.next_record_time_1 = None
+        self.next_record_time_2 = None
+        # parallelism profile
+        self.parallelism = None         # parallelism profile
+        self.rss = None                 # rss profile
+        self.loadavg = None             # load avg
+        # pinger
+        self.pinger = None
+        # parse work attributes GXPMAKE: x=y z=w ...
+        self.work_attr_parser = work_attribute_parser()
+
+    def safe_int(self, x):
+        try:
+            return int(x)
+        except ValueError,e:
+            return None
+
+    def parse_args(self, sys_argv):
+        """
+        parse command line args
+        argv = sys_argv
+        return value
+        -1 on failure
+         0 on success
+        """
+        make_args = []
+        xmake_args = []
+        e_args = []
+        args = make_args
+        self.sys_argv = sys_argv
+        for a in sys_argv[1:]:
+            if a == "--":
+                # whatever comes after '--' is passed to xmake_args
+                args = xmake_args
+            elif a == "---":
+                # whatever comes after '---' is passed to initial e
+                args = e_args
+            else:
+                args.append(a)
+        xmake_opts = xmake_cmd_opts()
+        if xmake_opts.parse(xmake_args) == -1:
+            return -1
+        self.opts = xmake_opts
+        self.make_args = make_args
+        self.xmake_args = xmake_args
+        self.e_args = e_args
+
+    def cur_time(self):
+        """
+        current time relative to start time
+        """
+        if self.time_start is None:
+            self.time_start = time.time()
+            return 0.0
+        else:
+            return time.time() - self.time_start
+    
+    def open_LOG(self):
+        """
+        open log file for writing
+        return -1 on failure, 0 on success
+        """
+        if self.opts.log != "":
+            log = os.path.join(self.opts.state_dir, self.opts.log)
+            try:
+                self.logfp = open(log, "wb")
+            except Exception,e:
+                Es("xmake: %s : %s\n" % (log, e.args,))
+                return -1
+        if self.logfp:
+            self.LOG("started at %.3f\n" % time.time())
+        return 0
+
+    def close_LOG(self):
+        """
+        open log file
+        """
+        if self.logfp:
+            self.LOG("finished\n")
+            self.logfp.close()
+            
+    def LOG(self, s):
+        """
+        write s to log
+        """
+        logfp = self.logfp
+        if logfp:
+            t = "xmake: %.3f: %s" % (self.cur_time(), s)
+            if dbg>=2: Ws(t)
+            logfp.write(t)
+            logfp.flush()
+
+    def get_user_name(self):
+        """
+        user name or id
+        """
+        user = os.environ.get("USER")
+        if user is None:
+            return "%s" % os.geteuid()
+        else:
+            return user
+
+    def get_tmp_dir(self):
+        """
+        dir to make working dir in
+        """
+        return "/tmp"
+
+    def mk_tmp_dir(self):
+        """
+        make a temporary directory like
+        /tmp/xmake-tau
+        """
+        tmp = self.get_tmp_dir()
+        dire = os.path.join(tmp, "xmake-%s" % self.get_user_name())
+        try:
+            os.mkdir(dire, 0700)
+            ok = 1
+        except OSError,e:
+            if e.args[0] == errno.EEXIST:
+                ok = 1
+            else:
+                ok = 0
+        if ok == 0:
+            Es("xmake: fatal: could not make a socket directory %s\n" % dire)
+            return None
+        if not os.access(dire, os.W_OK):
+            Es("xmake: fatal: socket directory %s not writable\n" % dire)
+            return None
+        return dire
+    
+    def mk_server_socket(self):
+        """
+        make a socket under the temporary directory.
+        the name is determined base on session name
+        so that gxpc makectl can find the right xmake
+        to talk to.
+        let's say session file looks like:
+
+          gxpsession-monako-tau-2009-01-26-22-55-12-28724-80926995
+
+        we get socket file under the name:
+
+          xmake-<pid>-2009-01-26-22-55-12-28724-80926995
+
+        set the name to GXP_MAKE_SO_NAME, to pass it to mksh 
+        (child of GNU make).
+        """
+        # cookie = "%d-%06d" % (os.getpid(), random.randint(0, 1000000))
+        cookie = "%d" % os.getpid()
+        if self.session is None:
+            dire,basex = None,None
+        else:
+            dire,base = os.path.split(self.session)
+            session_pat = re.compile("(G|g)xp-[^-]+-session-[^-]+-[^-]+-(.*)")
+            m = session_pat.match(base)
+            basex = m.group(2)
+        name = os.path.join(dire, ("xmake-%s-%s" % (cookie, basex)))
+        if self.logfp:
+            self.LOG("making server socket on %s\n" % name)
+        so = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        so.bind(name)
+        so.listen(self.opts.qlen)
+        os.chmod(name, 0600)
+        os.environ["GXP_MAKE_SO_NAME"] = name
+        if self.logfp:
+            self.LOG("server listening on %s\n" % name)
+        return so,name
+
+    def close_fds(self):
+        """
+        close file descriptors we do not want to inherit
+        to children
+        """
+        for fd in [ self.gxpc_fd, self.child_wfd,
+                    self.child_rfd, self.gxpc_io_fd ]:
+            if fd is not None: os.close(fd)
+        if self.so is not None: self.so.close()
+
+    def readlines_aux(self, fd):
+        """
+        read upto 100K bytes without blocking.
+        """
+        F = [ fd ]
+        W = E = []
+        while 1:
+            try:
+                R,_,_ = select.select(F, W, E, 0.0)
+            except select.error,e:
+                if e.args[0] == errno.EINTR:
+                    continue    # retry
+                else:
+                    raise
+            if len(R) == 0: return ""
+            try:
+                return os.read(fd, 100000)
+            except IOError,e:
+                if e.args[0] == errno.EINTR:
+                    continue    # retry
+                else:
+                    raise
+
+    def readlines(self, fd):
+        """
+        read many bytes from fd and return a list
+        of lines. partial lines are kept in
+        self.gxpc_partial_msg
+        """
+        A = []
+        while 1:
+            a = self.readlines_aux(fd)
+            if a == "": break
+            A.append(a)
+        A = string.split(string.join(A, ""), "\n")
+        if len(A) == 0:
+            assert self.gxpc_partial_msg == ""
+            return []
+        else:
+            X = self.gxpc_partial_msg
+            A[0] = X + A[0]
+            self.gxpc_partial_msg = A[-1]
+            S = A[:-1]
+            for s in S: assert s, (a, A, X, S)
+            return S
+            
+    def recv_bytes(self, conn, n):
+        """
+        receive n bytes from a connection
+        """
+        msgs = []
+        r = n
+        while r > 0:
+            try:
+                m = conn.recv(r)
+            except socket.error,e:
+                if e.args[0] == errno.EINTR:
+                    continue
+                else:
+                    raise
+            if m == "": break
+            msgs.append(m)
+            r = r - len(m)
+        if r == n:
+            return ""                   # real EOF
+        elif r > 0:
+            return None                 # NG, broken
+        else:
+            return string.join(msgs, "")
+
+    def recv_sz(self, conn):
+        """
+        receive 10 bytes from conn and translate
+        it into int
+        """
+        s = self.recv_bytes(conn, 10)
+        if s == "" or s is None: return s
+        return int(s)
+
+    def recv_element(self, conn):
+        """
+        receive a single element from mksh.
+        10 bytes header (= size) followed by size bytes
+        """
+        elem_len = self.recv_sz(conn)
+        if elem_len is None or elem_len == "": return elem_len
+        elem = self.recv_bytes(conn, elem_len)
+        if elem is None or len(elem) != elem_len: return None
+        return elem
+
+    def recv_work_aux(self, conn):
+        """
+        receive a work from mksh.
+        """
+        cmd = self.recv_element(conn)
+        if cmd is None or cmd == "": return None,None,None
+        cwd = self.recv_element(conn)
+        if cwd is None or cwd == "": return None,None,None
+        envs = []
+        while 1:
+            varval = self.recv_element(conn)
+            if varval == "": break
+            if varval is None: return None,None,None
+            envs.append(varval)
+        return cmd,cwd,envs
+
+    def recv_work(self):
+        """
+        receive a work from a connection
+        """
+        conn,addr = self.so.accept()
+        cmd,cwd,envs = self.recv_work_aux(conn)
+        if self.logfp:
+            self.LOG("got work cmd=%s cwd=%s env=%s\n" % (cmd, cwd, envs))
+        cur_time = self.cur_time()
+        work_idx = self.id_gen.work_counter.get()
+        work = Work().init(work_idx, cmd, cwd, envs, cur_time, self, conn)
+        self.works.add_work(work)
+        work.make_run()
+
+    def recv_works(self):
+        while 1:
+            try:
+                R = []
+                R,_,_ = select.select([self.so], [], [], 0.0)
+            except select.error,e:
+                if e.args[0] == errno.EINTR:
+                    self.LOG("select interrupted in recv_works\n")
+                else:
+                    raise
+            if len(R) == 0: break
+            self.recv_work()
+        
+    def recv_notifications(self):
+        """
+        receive a termination notification of a single command from
+        gxpc.
+        (gupid, tid, src, rid, pid, status, rusage)
+        hongo104-tau-2008-04-26-13-05-48-11662 tid_make_24108_9380 proc 1 13335 0
+        """
+        lines = self.readlines(self.gxpc_fd)
+        if len(lines) == 0:
+            if self.logfp:
+                self.LOG("got EOF from notify channel %s\n" % self.gxpc_cmd)
+            self.gxpc_fd = None
+            return ""
+        if self.logfp:
+            self.LOG("got %d notifications\n" % len(lines))
+        for line in lines:
+            self.recv_notification(line)
+
+    def recv_notification(self, line):
+        """
+        handle a message from gxpc saying a process has finished
+        """
+        if self.logfp:
+            self.LOG("notified of a remote process termination %s\n" % line)
+        (man_name, tid, src_, rid, pid_, wait_status, rusage) = eval(line)
+        assert man_name != ""
+        man = self.men.get(man_name)
+        cur_time = self.cur_time()
+        if rid == self.id_gen.join:
+            # got notifications saying a worker has joined
+            if man is None:
+                # the first msg from this man
+                capacity = self.conf.get_cpu_count(man_name)
+                if self.logfp:
+                    self.LOG("new worker %s joined with %d cpus\n" 
+                             % (man_name, capacity))
+                man = Man(len(self.men), man_name, capacity, cur_time)
+                self.men[man_name] = man
+                for i in range(capacity):
+                    self.men_free.append((man.prio(), man))
+        elif rid == self.id_gen.ping:
+            # notifications saying ping to a worker has finished
+            if man:
+                man.set_heartbeat(cur_time)
+                msg = ("worker %s in state %s replied to ping\n"
+                       % (man_name, man.state))
+                if self.logfp: self.LOG(msg)
+                if man.state != man_state.active: Es("xmake: %s" % msg)
+        elif rid == self.id_gen.leave_now:
+            # notifications saying a worker has received leave now
+            if man:
+                msg = ("worker %s in state %s will leave now\n"
+                       % (man_name, man.state))
+                if self.logfp: self.LOG(msg)
+                Es("xmake: %s" % msg)
+                if man.state < man_state.leave_now:
+                    man.state = man_state.leave_now
+        elif rid == self.id_gen.leave:
+            # notifications saying a worker has received leave msg
+            if man:
+                msg = ("worker %s in state %d will leave after current work\n"
+                       % (man_name, man.state))
+                if self.logfp: self.LOG(msg)
+                Es("xmake: %s" % msg)
+                if man.state < man_state.leaving:
+                    man.state = man_state.leaving
+        elif self.id_gen.run_pat.match(rid):
+            run_idx = self.id_gen.get_run_idx(rid)
+            run = self.runs_running.get(run_idx)
+            # assert run, (rid, run_idx)
+            if run:
+                self.handle_finish(run, wait_status, rusage)
+            else:
+                # the run finished twice
+                pass
+        else:
+            msg = "unknown rid %s\n" % rid
+            if self.logfp: self.LOG(msg)
+            Es("xmake: %s" % msg)
+        self.n_state_changes = self.n_state_changes + 1
+            
+    def handle_finish(self, run, wait_status, rusage):
+        # a working process has just finished.
+        # already finished
+        assert (run.time_end is None), run.time_end
+        if self.logfp:
+            self.LOG("run %s finished with status=%s\n" % (run, wait_status))
+        cur_time = self.cur_time()
+        self.parallelism.add_dx(cur_time, -1)
+        exit_status = termsig = None
+        etime = 0.0
+        if os.WIFEXITED(wait_status):
+            exit_status = os.WEXITSTATUS(wait_status)
+        elif os.WIFSIGNALED(wait_status):
+            termsig = os.WTERMSIG(wait_status)
+        run.finish(cur_time,
+                   run_status.finished, exit_status, termsig, etime, rusage)
+
+
+    def read_sz(self, fd, sz):
+        """
+        read exactly sz bytes or return None
+        """
+        A = []
+        r = sz
+        while r > 0:
+            try:
+                a = os.read(fd, r)
+            except IOError,e:
+                if e.args[0] == errno.EINTR:
+                    continue    # retry
+                else:
+                    raise
+            except OSError,e:
+                if e.args[0] == errno.EINTR:
+                    continue    # retry
+                else:
+                    raise
+            if a == "": 
+                os.close(fd)
+                return None
+            r = r - len(a)
+            A.append(a)
+        return string.join(A, "")
+        
+    def recv_event_io(self, fd):
+        m = self.read_sz(fd, 10)
+        if m is None: return None
+        sz = int(m)
+        m = self.read_sz(fd, sz)
+        return gxpm2.parse(m)
+
+    def recv_io(self):
+        """
+        receive job outputs
+        """
+        fd = self.gxpc_io_fd
+        while 1:
+            try:
+                R = []
+                R,_,_ = select.select([ fd ], [], [], 0.0)
+            except select.error,e:
+                if e.args[0] == errno.EINTR:
+                    self.LOG("select interrupted in recv_job_io\n")
+                else:
+                    raise
+            if len(R) == 0: break
+            ev = self.recv_event_io(fd)
+            if ev is None:
+                self.LOG("EOF from gxpc job io\n")
+                self.gxpc_io_fd = None
+                break
+            # we can never know the we never receive io from
+            # this job ...
+            run_idx = self.id_gen.get_run_idx(ev.rid)
+            run = self.runs_running.get(run_idx)
+            if run is None:
+                msg = ("warning: io from %d not be recorded '%s'\n" 
+                       % (run_idx, ev.payload))
+                if self.logfp: self.LOG(msg)
+                Es("xmake: %s" % msg)
+            else:
+                run.add_io(ev.payload)
+                self.works.update_run(run)
+
+    def check_constraint(self, run, man):
+        """
+        judge if this RUN can be executed by MAN
+        """
+        if run.hold_limit < self.cur_time(): return 1
+        on = run.work.attrs.get("on")
+        if on is None: return 1
+        if dbg>=2:
+            Es("xmake: task constraint: on=%s\n" % on)
+        if re.match(on, man.name): return 1
+        return 0
+
+    def find_man_for_run(self, run):
+        """
+        find man for this run from free men.
+        """
+        hold = 0
+        for prio_man in self.men_free:
+            _,man = prio_man
+            if man.state == man_state.active:
+                if self.check_constraint(run, man):
+                    self.men_free.remove(prio_man)
+                    return man
+                else:
+                    hold = 1
+            else:
+                # the man is dead
+                self.men_free.remove(prio_man)
+                if dbg>=2:
+                    Es("xmake: man %s in state %d found in "
+                       "men_free queue\n" % (man.name, man.stat))
+        if hold:
+            # there was at least one man free, but
+            # he could not satifisy the constraint.
+            hold_limit = self.cur_time() + float(attrs.get("hold", "5.0"))
+            if dbg>=2: 
+                Es("xmake: hold until %f (%s)\n" % (hold_limit, run.work.cmd))
+            run.hold_limit = hold_limit
+        return None
+
+    def find_matches(self):
+        if self.logfp:
+            self.LOG("matching men and works\n")
+        matches = []                          # work -> man
+        new_runs_todo = []
+        self.men_free.sort()
+        while len(self.runs_todo) > 0 and len(self.men_free) > 0:
+            run = self.runs_todo.pop(0)
+            if dbg>=2:
+                if self.logfp:
+                    self.LOG("finding match for run '%s'\n" % run)
+            # look for man who can execute it
+            man = self.find_man_for_run(run)
+            if man:
+                if self.logfp:
+                    self.LOG("run '%s' assignged %s\n" % (run, man.name))
+                run.man_name = man.name  # assign man to run
+                matches.append((run, man))
+            else:
+                new_runs_todo.append(run)
+        self.runs_todo = new_runs_todo + self.runs_todo
+        if self.logfp:
+            self.LOG("%d job matches found\n" % len(matches))
+        return matches
+
+    def check_readable(self, fd):
+        """
+        check if fd is readable
+        """
+        try:
+            R,_,_ = select.select([ fd ], [], [], 0.0)
+            if len(R) > 0: return 1
+        except select.error,e:
+            if e.args[0] != errno.EINTR: raise
+        return 0
+                    
+    def dispatch(self):
+        """
+        dispatch some works, assuming there is a free worker
+        and a work to execute.
+
+        gxpc e -g <worker> --tid <tid> --keep_connection 0 '<cmd>'
+
+        """
+        if self.opts.no_dispatch_after is not None \
+               and self.cur_time() > self.opts.no_dispatch_after:
+            if self.logfp:
+                self.LOG(("do not dispatch work after %.3f\n"
+                          % self.opts.no_dispatch_after))
+            return 0
+        for m in self.find_matches():
+            self.matches.append(m)
+        n = 0
+        cur_time = self.cur_time()
+        while len(self.matches) > 0:
+            run,man = self.matches.pop(0)
+            run.start(cur_time, man, self.opts.emulate)
+            n = n + 1
+            self.n_state_changes = self.n_state_changes + 1
+            # check if a job is returning
+            # may be too much overhead
+            if n >= 1000 and self.check_readable(self.gxpc_fd):
+                break
+            # check if there are many zombie children
+            if self.n_sigchild_written - self.n_sigchild_read > 50:
+                break
+        if n > 0:
+            self.parallelism.add_dx(cur_time, n)
+        if self.logfp:
+            self.LOG("%d jobs dispatched\n" % n)
+        return n
+
+    def check_worker_status(self, cur_time):
+        """
+        check status of all workers
+        """
+        timeout = self.opts.ping_timeout
+        men = self.men.items()
+        men.sort()
+        for name,man in men:
+            status = None
+            exit_status = None
+            if man.state == man_state.gone:
+                # no man die twice
+                pass
+            elif man.state == man_state.leave_now:
+                Es("xmake: worker %s is told to leave now\n" % name)
+                status = run_status.worker_left
+                exit_status = self.opts.exit_status_worker_left
+            elif (man.time_last_heartbeat < self.pinger.time_last_ping
+                  and cur_time - man.time_last_heartbeat > timeout):
+                # we have pinged after hearing from this guy, but
+                # this guy has not responded for timeout sec.
+                Es("xmake: worker %s not responding for %f sec\n"
+                   % (name, timeout))
+                status = run_status.worker_died
+                exit_status = self.opts.exit_status_worker_died
+            if exit_status is not None:
+                man.state = man_state.gone
+                n = len(man.runs_running)
+                for run in man.runs_running.values():
+                    run.finish(cur_time, 
+                               status, exit_status, None, None, None)
+                    assert run.run_idx not in man.runs_running
+                    assert run.run_idx not in self.runs_running
+                    assert run.man is None
+                if n > 0:
+                    self.parallelism.add_dx(cur_time, -n)
+                assert len(man.runs_running) == 0
+
+    def run_persistent_e(self, tid):
+        """
+        create the task to which processes will be added later.
+        invoked once in the beginning.
+
+        return command_line,pid,file_object_to_hear_from_it
+        """
+        # child gxpc write process terminatation events to w.
+        # parent gets them from r
+        r,w = os.pipe()
+        rj,wj = os.pipe()
+        # rc becomes stdin of the child
+        # the parent immediately closes w0
+        # net effect is gxpc immediately receives EOF from its stdin
+        rc,wc = os.pipe()
+
+        rid = self.id_gen.join
+        cmd = ([ self.opts.gxpc ] + self.e_args
+               + [ "e", "--tid", tid, "--persist", "1",
+                   "--rid", rid, 
+                   "--notify_proc_exit", ("%d" % w),
+                   "--log_io", ("%d" % wj) ])
+        pid = os.fork()
+        if pid == 0:
+            self.close_fds()
+            # os.setpgrp()
+            os.close(r)
+            os.close(rj)
+            os.close(wc)
+            os.dup2(rc, 0)              # make rc stdin of the child
+            if self.logfp:
+                self.LOG("run persistent task %s\n" % cmd)
+            os.execvp(cmd[0], cmd)
+        else:
+            os.close(w)
+            os.close(wj)
+            os.close(rc)
+            os.close(wc)
+            return cmd,pid,r,rj
+        
+    def men_total_capacity(self):
+        n = 0
+        for man in self.men.values():
+            n = n + man.capacity
+        return n
+
+    def show_state(self):
+        if self.logfp:
+            self.LOG("%d/%d/%d waiting/running/total jobs, "
+                     "%d/%d free/total men, "
+                     "socket = %s, make = %s, gxpc = %s, gxpc_fd = %s\n"
+                     % (len(self.runs_todo), len(self.runs_running),
+                        self.id_gen.work_counter.c,
+                        len(self.men_free), self.men_total_capacity(),
+                        self.so_name, self.make_pid,
+                        self.gxpc_pid, self.gxpc_fd))
+
+    def check_shine_file(self):
+        """
+        check if shine file exists and updated after start_t
+        """
+        if self.interrupted > 0: return
+        shine = os.path.join(self.opts.state_dir, self.opts.shine_file)
+        try:
+            st = os.stat(shine)
+        except OSError,e:
+            return
+        mtime = st[stat.ST_MTIME]
+        if self.time_start < mtime:
+            msg = "found shine file (%s) updated, terminating..." % shine
+            self.LOG("%s\n" % msg)
+            Es("xmake : %s\n" % msg)
+            self.interrupted = self.interrupted + 1
+    
+    def get_self_rss(self):
+        fp = os.popen("ps h -o rss -p %d" % os.getpid())
+        while 1:
+            try:
+                result = fp.read()
+                break
+            except OSError,e:
+                if e.args[0] != errno.EINTR: raise
+            except IOError,e:
+                if e.args[0] != errno.EINTR: raise
+        result = string.strip(result)
+        try:
+            result = float(result)
+        except ValueError,e:
+            return -1
+        return result / 1024.0
+
+    def record_rss(self, cur_time):
+        self.rss.add_x(cur_time, self.get_self_rss())
+
+    def get_loadavg(self):
+        fp = os.popen("uptime")
+        while 1:
+            try:
+                result = fp.read()
+                break
+            except OSError,e:
+                if e.args[0] != errno.EINTR: raise
+            except IOError,e:
+                if e.args[0] != errno.EINTR: raise
+        m = re.search("load average: ([^,]*),", result)
+        if m is None: return -1
+        try:
+            return float(m.group(1))
+        except ValueError,e:
+            return -1
+
+    def record_loadavg(self, cur_time):
+        self.loadavg.add_x(cur_time, self.get_loadavg())
+
+    def periodic(self, finished):
+        self.check_shine_file()
+        self.show_state()
+        t0 = self.cur_time()
+        if (finished or self.last_record_time is None
+            or
+            (t0 > self.next_record_time_1
+             and self.n_state_changes > self.opts.fast_update_period)
+            or
+            t0 > self.next_record_time_2):
+            for run in self.runs_running.values():
+                run.sync(t0)
+            # not quite right. they should be measured
+            # more often. but if we do them everytime,
+            # this loop become too busy because each of
+            # them runs a process and raise sigchlds.
+            self.record_rss(t0)
+            self.record_loadavg(t0)
+            self.hgen.generate(finished)
+            t1 = self.cur_time()
+            self.n_state_changes = 0
+            self.calc_next_update(t0, t1)
+
+    def calc_next_update(self, t0, t1):
+        dt = t1 - t0
+        time_to_next_1 = max(dt * 10.0, self.opts.update_interval_1)
+        time_to_next_2 = max(dt * 10.0, self.opts.update_interval_2)
+        if self.last_record_time < 10.0:
+            # heuristics to update more eagerly in the beginning
+            time_to_next_1 = min(3.0, time_to_next_1)
+            time_to_next_2 = min(3.0, time_to_next_2)
+        self.last_record_time = t1
+        self.next_record_time_1 = t1 + time_to_next_1
+        self.next_record_time_2 = t1 + time_to_next_2
+
+    def set_make_environ(self):
+        makefiles = os.environ.get("MAKEFILES")
+        xmake_mk = os.path.join(os.environ["GXP_DIR"],
+                                os.path.join("gxpbin", "xmake.mk"))
+        if makefiles is None:
+            os.environ["MAKEFILES"] = xmake_mk
+        else:
+            os.environ["MAKEFILES"] = "%s %s" % (xmake_mk, makefiles)
+        os.environ["GXP_MAKELEVEL"] = "1"
+        x = ("%d" % self.opts.exit_status_connect_failed)
+        os.environ["GXP_MAKE_EXIT_STATUS_CONNECT_FAILED"] = x
+        x = ("%d" % self.opts.exit_status_server_died)
+        os.environ["GXP_MAKE_EXIT_STATUS_SERVER_DIED"] = x
+        if self.opts.local_exec_cmd is not None:
+            os.environ["GXP_MAKE_LOCAL_EXEC_CMD"] = self.opts.local_exec_cmd
+        if self.opts.make_envs is not None:
+            os.environ["GXP_MAKE_ENVS"] = self.opts.make_envs
+
+    def run_make(self):
+        """
+        run GNU make. return pid
+        """
+        # set envinronment variable that affects all subsequent
+        # invocations of make
+        pid = os.fork()
+        if pid == 0:
+            self.set_make_environ()
+            self.close_fds()
+            args = [ self.opts.make ] + self.make_args
+            if self.logfp:
+                self.LOG("run make %s\n" % args)
+            os.execvp(args[0], args)
+        else:
+            return pid
+
+    def sigchld(self, num, frame):
+        """
+        Handler of SIGCHLD. see below.
+        """
+        if 0 and self.logfp:    # too slow 
+            self.LOG("sigchld handler %d\n" % self.child_wfd)
+        self.n_sigchld_called = self.n_sigchld_called + 1
+        try:
+            x = os.write(self.child_wfd, "x")
+            assert x == 1
+            self.n_sigchild_written = self.n_sigchild_written + 1
+        except OSError,e:
+            if e.args[0] == errno.EBADF:
+                if self.logfp:
+                    self.LOG("sigchld failed to write\n")
+            else:
+                raise
+        if 0 and self.logfp:
+            self.LOG("sigchld handler returns\n")
+
+    def register_sigchld_handler(self):
+        """
+        register signal handler and notification pipe.
+        """
+        r,w = os.pipe()
+        self.child_rfd = r
+        self.child_wfd = w
+        self.n_sigchild_written = 0
+        self.n_sigchild_read = 0
+        signal.signal(signal.SIGCHLD, self.sigchld)
+
+    def handle_child_death(self):
+        """
+        called after a child terminates.
+        when a child terminates, OS first calls the sigchld.
+        it simply writes one byte to child_wfd.
+        meanwhile, the main thread selects child_rfd, so
+        it will know a child terminates, and handles it.
+        
+        """
+        w = self.n_sigchild_written
+        r = self.n_sigchild_read
+        if self.logfp:
+            self.LOG("handling child death (w=%d,r=%d)\n" % (w, r))
+        x = w - r
+        # I don't know why, but it really happens that
+        # written < read.
+        if x <= 0: x = 1
+
+        x = 10000                 # why 100? not 1000 or 10000?
+        a = ""
+        try:
+            a = os.read(self.child_rfd, x)
+        except IOError,e:
+            if e.args[0] == errno.EINTR:
+                if self.logfp:
+                    self.LOG("read interrupted\n")
+                return
+            else:
+                raise
+        if self.logfp:
+            self.LOG("got %d x's from child_rfd (%d sigchld calls)\n"
+                     % (len(a), self.n_sigchld_called))
+        self.n_sigchild_read = self.n_sigchild_read + len(a)
+        pids = []
+        while 1:
+            try:
+                pid,status = os.waitpid(-1, os.WNOHANG)
+            except OSError,e:
+                if e.args[0] == errno.ECHILD: break
+                raise
+            if pid == 0: break
+            rusage = self.ru.get_child_rusage()
+            pids.append((pid, status, rusage))
+        for pid,status,rusage in pids:
+            if self.logfp:
+                self.LOG("child (%d) terminated with %d\n" % (pid, status))
+            if pid == self.make_pid:
+                if self.logfp:
+                    self.LOG("it is the child make\n")
+                self.make_pid = None
+                self.make_status = status
+            elif pid == self.gxpc_pid:
+                if self.logfp:
+                    self.LOG("it is the initial process\n")
+                self.gxpc_pid = None
+                self.gxpc_status = status
+            elif pid == self.pinger.pid:
+                if self.logfp:
+                    self.LOG("it is a ping job\n")
+                self.pinger.pid = None
+            else:
+                if self.logfp:
+                    self.LOG("it is a remote job\n")
+            self.n_state_changes = self.n_state_changes + 1
+        if self.logfp:
+            self.LOG("%d children reaped\n" % len(pids))
+                
+    def close_socket(self):
+        if self.so:
+            if self.logfp:
+                self.LOG("closing request socket %s\n" % self.so_name)
+            self.so.close()
+            self.so = None
+            os.remove(self.so_name)
+            self.so_name = None
+        
+    def kill_gxpc(self):
+        if self.gxpc_pid is not None:
+            if self.logfp:
+                self.LOG("killing initial process and its children %s\n"
+                         % self.gxpc_pid)
+            os.kill(self.gxpc_pid, signal.SIGTERM)
+
+    def abandon_runs_unfinished(self):
+        """
+        throw away all running runs and runs to do
+        """
+        cur_time = self.cur_time()
+        runs = self.runs_running.values()
+        if self.logfp:
+            self.LOG("exiting %d outstanding processes\n" % len(runs))
+        for run in runs:
+            run.finish(cur_time, 
+                       run_status.interrupted, 
+                       self.opts.exit_status_interrupted, None, None, None)
+        assert len(self.runs_running) == 0
+        if self.logfp:
+            self.LOG("exiting %d waiting processes\n" % len(self.runs_todo))
+        while len(self.runs_todo) > 0:
+            run = self.runs_todo.pop(0)
+            run.finish(cur_time,
+                       run_status.no_throw, 
+                       self.opts.exit_status_no_throw, None, None, None)
+        
+    def determine_exit_status(self):
+        s = self.make_status
+        if s is None:
+            return 1
+        elif os.WIFEXITED(s):
+            return os.WEXITSTATUS(s)
+        else:
+            return 1
+
+    def calc_next_timeout(self, cur_time):
+        if self.n_state_changes > self.opts.fast_update_period:
+            nr = self.next_record_time_1
+        else:
+            nr = self.next_record_time_2
+        int_at = self.opts.interrupt_at
+        if int_at is not None and int_at < nr:
+            time_limit = int_at
+        else:
+            time_limit = nr
+        for run in self.runs_todo:
+            time_limit = min(time_limit, run.hold_limit)
+        cur_time = self.cur_time()
+        timeout = time_limit - cur_time
+        if timeout < 0.0: timeout = 0.0
+        return timeout
+
+    def check_time_limit(self):
+        # take some special action for time limit
+        # (1) soft limit reached and no work in flight
+        # (2) hard limit reached
+        if self.interrupted: return
+        int_at = self.opts.interrupt_at
+        nd_after = self.opts.no_dispatch_after
+        cur_time = self.cur_time()
+        if int_at is not None and cur_time > int_at:
+            self.interrupted = 1
+            msg = ("hard limit %.3f reached. outstanding jobs will"
+                   " be killed with SIGINT. waiting jobs will exit"
+                   " with %d\n" 
+                   % (int_at, self.opts.exit_status_interrupted))
+            if self.logfp: self.LOG(msg)
+            Es("xmake: %s" % msg)
+        elif nd_after is not None and cur_time > nd_after \
+                and len(self.runs_running) == 0:
+            self.interrupted = 1
+            msg = ("soft limit %.3f reached. wait for outstanding"
+                   " jobs to finish. waiting jobs will exit with %d\n"
+                   % (nd_after, self.opts.exit_status_no_throw))
+            if self.logfp: self.LOG(msg)
+            Es("xmake: %s" % msg)
+
+    def prepare_cleanup(self):
+        if self.logfp: 
+            self.LOG("prepare cleanup\n")
+        if self.cleaning: return
+        self.cleaning = 1
+        self.close_socket()
+        self.kill_gxpc()
+        self.abandon_runs_unfinished()
+
+    def check_interrupt_or_make_death(self):
+        if self.logfp: 
+            self.LOG("check_interrupt_or_make_death "
+                     "make_pid=%s gxpc_pid=%s gxpc_fd=%s interrupted=%s\n" 
+                     % (self.make_pid, self.gxpc_pid, self.gxpc_fd,
+                        self.interrupted))
+        
+        if self.make_pid is None \
+                and self.gxpc_pid is None \
+                and self.gxpc_fd is None:
+            # make and gxpc have gone
+            return 1
+        if self.make_pid is None \
+                or self.gxpc_pid is None \
+                or self.gxpc_fd is None \
+                or self.interrupted > 0:
+            self.prepare_cleanup()
+        return 0
+
+    def wait_for_events(self):
+        F = []
+        for x in [ self.so, self.child_rfd, 
+                   self.gxpc_fd, self.gxpc_io_fd ]:
+            if x: F.append(x)
+
+        self.LOG("%d sigchld calls\n" % self.n_sigchld_called)
+
+        # calc next timeout
+        cur_time = self.cur_time()
+        timeout = self.calc_next_timeout(cur_time)
+        # n_dispatched_jobs == 0 and ???
+        if timeout < 1.0: timeout = 1.0
+        if self.logfp:
+            self.LOG("select(%d, timeout=%.2f) \n" % (len(F), timeout))
+        R = []
+        try:
+            R,_,_ = select.select(F, [], [], timeout)
+        except select.error,e:
+            if e.args[0] == errno.EINTR:
+                if self.logfp:
+                    self.LOG("select interrupted\n")
+            else:
+                raise
+        return R
+        
+    def server_iterate(self):
+        self.check_time_limit()
+        if self.check_interrupt_or_make_death(): return 0
+        # dispatch jobs
+        self.dispatch()
+        # wait until we receive something
+        t0 = self.cur_time()
+        R = self.wait_for_events()
+        t1 = self.cur_time()
+        if self.so in R: self.recv_works()
+        if self.gxpc_fd in R: self.recv_notifications()
+        if self.gxpc_io_fd in R: self.recv_io()
+        if self.child_rfd in R: self.handle_child_death()
+        if t1 - t0 > 1.0:
+            # if the server is very busy, it may be missing
+            # msgs that have come. if t1 - t0 > 1.0, 
+            # the server nothing has happend long enough,
+            # meaning the server is idle. good time to check
+            # workers
+            self.check_worker_status(t1) # t0?
+        self.pinger.ping_all_men(t1)     # t0?
+        return 1
+
+    def ensure_directory(self, dire):
+        try:
+            os.mkdir(dire)
+        except OSError,e:
+            if e.args[0] == errno.EEXIST:
+                pass
+            else:
+                raise
+        if os.path.isdir(dire): return 0
+        Es("xmake: could not make a state directory %s\n" % dire)
+        return -1
+
+    def check_process(self, pid):
+        # return 1 if pid exists
+        try:
+            os.kill(pid, 0)
+            return 1
+        except OSError,e:
+            if e.args[0] == errno.ESRCH: return 0
+            raise
+
+    def safe_remove_socket(self, so_name):
+        os.remove(so_name)
+
+    def find_xmake_sockets(self, pattern):
+        dire,base = os.path.split(self.session)
+        xmake_socket_pat = re.compile("xmake-(?P<pid>\d+)-\d+-%s" % base)
+        live_socks = []
+        for f in os.listdir(dire):
+            # check if f appears a xmake socket
+            m = xmake_socket_pat.match(f)
+            if m:
+                # if so, check if the process is still running
+                # (should normally be, but previous xmake may have died
+                # without cleaning up)
+                pid = self.safe_int(m.group("pid"))
+                if pid is None: continue
+                if self.check_process(pid):
+                    live_socks.append(f)
+                else:
+                    path = os.path.join(dire, f)
+                    if self.logfp:
+                        self.LOG("removing socket of apparently dead xmake %s\n" % path)
+                    self.safe_remove_socket(path)
+        return live_socks
+
+    def server_main_ex(self):
+        """
+        main loop
+        """
+        self.pinger = ping_men(self, self.opts.ping_interval)
+        # when run by gxpc make, GXP_SESSION must be set to make sure
+        # children can attach the right session
+        self.self_pid = os.getpid()
+        self.so,self.so_name = self.mk_server_socket()
+        self.tid = "tid-%s" % os.path.basename(self.so_name)
+        if dbg>=2:
+            msg = ("to control, gxpc --save_session 0 e --tid %s"
+                   " --rid OPERATION --keep_connection 0\n" % self.tid)
+            Es("xmake: %s" % msg)
+            self.LOG(msg)
+        self.id_gen = id_generator()
+        (self.gxpc_cmd,
+         self.gxpc_pid,
+         self.gxpc_fd,
+         self.gxpc_io_fd) = self.run_persistent_e(self.tid)
+        self.gxpc_partial_msg = ""
+        self.parallelism = time_series_data(self.opts.state_dir,
+                                            self.opts.parallelism_dat)
+        self.rss = time_series_data(self.opts.state_dir,
+                                    self.opts.rss_dat)
+        self.loadavg = time_series_data(self.opts.state_dir,
+                                        self.opts.loadavg_dat)
+        self.conf = xmake_server_conf()
+        self.conf.parse_files(self.opts.conf)
+
+        # --------
+        self.register_sigchld_handler() # register sig handler
+        self.make_pid = self.run_make() # run GNU make
+        self.works = mk_work_db(self.opts.work_db_class,
+                                self.opts.state_dir, self.opts.work_db)
+        self.runs_todo = []     # runs received, but not yet matched with man
+        self.matches = []   # (run,man)'s matched, but not yet started
+        self.runs_running = {}  # runs running (idx -> Run object)
+        self.men = {}       # men (workers) gupid -> man object
+        self.men_free = []  # list of free men
+        self.interrupted = 0
+        self.hostname = socket.gethostname()
+        self.hgen = html_generator(self.opts, self)
+        self.periodic(0)
+        # really, really, begin work
+        while 1:
+            try:
+                if self.server_iterate() == 0: break
+                self.periodic(0)
+            except KeyboardInterrupt:
+                self.interrupted = self.interrupted + 1
+        self.periodic(1)
+        return self.determine_exit_status()
+
+    def server_main(self):
+        if self.ensure_directory(self.opts.state_dir) == -1: return 1
+        if self.open_LOG() == -1: return 1
+        try:
+            return self.server_main_ex()
+        finally:
+            # make sure we exit cleanly
+            self.close_LOG()
+
+    def ctl_main(self):
+        """
+        main entry point of makectl
+        """
+        # op and pattern should come from command lines
+        operations = self.opts.args
+        pattern = None
+        # search sockets to talk to
+        sockets = self.find_xmake_sockets(pattern)
+        if len(sockets) == 0:
+            Es("xmakectl: no xmake processes appear running\n")
+            return 1
+        elif len(sockets) > 1:
+            # todo: specify which
+            Es("xmakectl: multiple xmake processes appear running\n")
+            return 1
+        [ so ] = sockets
+        tid = "tid-%s" % so
+        for op in operations:
+            rid = op
+            cmd = ([ self.opts.gxpc, "--save_session", "0"  ]
+                   + self.e_args
+                   + [ "e", "--tid", tid, "--rid", rid,
+                       "--keep_connection", "0" ])
+            cmd = string.join(cmd, " ")
+            if dbg>=2:
+                Es("xmake: %s\n" % cmd)
+            status = os.system(cmd)
+            if os.WIFEXITED(status):
+                return os.WEXITSTATUS(status)
+            else:
+                return 1
+
+    def main(self):
+        if self.parse_args(sys.argv) == -1:
+            return 1
+        if self.opts.help:
+            Es(self.opts.usage())
+            return 1
+        self.session = os.environ.get("GXP_SESSION")
+        if dbg>=2:
+            Es("xmake: session = %s\n" % self.session)
+        if self.opts.ctl:
+            return self.ctl_main()
+        else:
+            return self.server_main()
+            
+if __name__ == "__main__":
+    sys.exit(xmake_server().main())
+
+#
+# memo (staging)
+#
+# (1) add the following lines in gxpc_make.conf
+#
+# preprocess staging_in_cmd
+# postprocess staging_out_cmd
+#
+# then, for each command executed by make, staging_in_cmd is
+# executed before it, and staging_out_cmd after it, 
+# by the same worker (thus on the same host) as the one
+# executing the command itself. e.g.,
+#
+# preprocess echo hello
+# postprocess echo bye
+#
+# will print hello and bye before and after each command.
+#
+# (2) if the staging_in_command or staging_out_cmd include %(cmd)s,
+# it will be replaced by the command to be executed, with all quote
+# characters (' and ") replaced by spaces for the reasons explained shortly.
+# this will allow you to analyze the line and decide what to do based
+# on the command line.
+#
+# preprocess ./your_stage_in_tool '%(cmd)s'
+# postprocess ./your_stage_out_tool '%(cmd)s'
+#
+# will call ./your_stage_in_tool 'enju foo' for the command 'enju foo'
+# executed by make. by looking at the command line in your_stage_in_tool,
+# you may perhaps want to stage in foo somehow.
+#
+# note that it is not mandatory, but highly recommended to quote the %(cmd)s,
+# to avoid problems associated with shell special characters. for example,
+# if the command is 'enju foo > hello', what will be executed before this
+# is './your_stage_in_tool enju foo > hello', which is probably not what
+# you intended.
+#
+# there would still be a problem if the command includes ' chracter and
+# substitute %(cmd)s for it. to avoid this problem, it currently replaces
+# all ' and " with spaces.
+#
+
+# $Log: xmake.20100414,v $
+# Revision 1.3  2010/05/02 03:14:53  ttaauu
+# new xmake that runs with constant memory
+#
+# Revision 1.2  2010/04/13 19:20:48  ttaauu
+# xmake.20100414
+#
+# Revision 1.1  2010/04/13 16:11:24  ttaauu
+# added xmake.20100414
+#
+# Revision 1.58  2010/03/09 07:21:04  ttaauu
+# *** empty log message ***
+#
+# Revision 1.57  2010/03/08 11:07:14  ttaauu
+# supress man ... in state ... found msg in xmake
+#
+# Revision 1.56  2010/03/05 05:27:09  ttaauu
+# stop extending PYTHONPATH. see 2010-3-5 ChangeLog
+#
+# Revision 1.55  2010/02/28 12:20:20  ttaauu
+# *** empty log message ***
+#
+# Revision 1.54  2010/02/24 08:32:08  ttaauu
+# added --make_link_limit option to gxpc make. see 2010-2-24 entry in ChangeLog
+#
+# Revision 1.53  2010/02/19 04:29:43  ttaauu
+# fix help of --update_interval_1
+#
+# Revision 1.52  2010/02/05 03:21:28  ttaauu
+# default state.html is now gxp_make_state/index.html. it displays utime and systime on state/index.html. (ChangeLog 2010-2-5)
+#
+# Revision 1.51  2010/01/31 15:02:54  ttaauu
+# *** empty log message ***
+#
+# Revision 1.50  2010/01/31 05:31:28  ttaauu
+# added mapreduce support
+#
+# Revision 1.49  2010/01/17 17:17:28  ttaauu
+# xmake now supports --make_env. see 2010-1-18 Taura
+#
+# Revision 1.48  2009/12/27 16:02:20  ttaauu
+# fixed broken --create_daemon 1 option
+#
+# Revision 1.47  2009/10/30 08:18:31  ttaauu
+# fixed the bug reported by masa-tanaka. see ChangeLog 2009-10-30
+#
+# Revision 1.46  2009/10/25 14:51:53  ttaauu
+# ChangeLog 2009-10-25 xmake
+#
+# Revision 1.45  2009/09/29 10:37:24  ttaauu
+# shine file in xmake
+#
+# Revision 1.44  2009/09/18 15:44:13  ttaauu
+# record individual job output in state.html
+#
+# Revision 1.43  2009/09/17 18:47:53  ttaauu
+# ioman.py,gxpm.py,gxpd.py,gxpc.py,xmake: changes to track rusage of children and show them in state.txt
+#
+# Revision 1.42  2009/06/11 22:02:12  ttaauu
+# *** empty log message ***
+#
+# Revision 1.41  2009/06/06 14:06:26  ttaauu
+# added headers and logs
+#
+
+

@@ -1,0 +1,70 @@
+#!/usr/bin/expect
+
+#
+# usage:
+#   export SU_PASSWORD=...
+#   ./su_cmd
+#
+
+#
+# get password from the environment
+#
+set x [array get env SU_PASSWORD]
+if {$x == ""} {
+  puts "su_cmd: set SU_PASSWORD environment variable"; exit 1
+}
+set pw [lindex $x 1]
+
+# 
+# not to echo "Password:" prompt
+#
+log_user 0 
+
+#
+# exec comand
+# -noecho not to echo this command
+#
+spawn -noecho su -c "$argv"
+
+#
+# wait for su to show "Password:" prompt
+#
+expect {
+  eof { puts "su_cmd: no password prompt"; exit 1 }
+  timeout { puts "su_cmd: no password prompt"; exit 1 }
+  "Password:"
+}
+
+#
+# send password to su
+#
+send "$pw\r"
+
+#
+# wait for a new return. it appears that su prints a
+# newline
+#
+expect {
+  eof { puts "su_cmd: no response"; exit 1 } 
+  timeout { puts "su_cmd: no response"; exit 1 } 
+  "\n"
+}
+
+#
+# repeat getting a line and print it
+#
+while { 1 } {
+    expect {
+	"\n" { puts -nonewline $expect_out(buffer) }
+	eof { break }
+    }
+}
+puts -nonewline $expect_out(buffer)
+
+#
+# obtain the exit status of the su command
+#
+set L [wait]
+exit [lindex $L 3]
+
+

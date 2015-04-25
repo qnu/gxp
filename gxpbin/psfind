@@ -1,0 +1,116 @@
+#!/usr/bin/env python
+
+import os,string,sys
+
+import re
+
+def Es(s):
+    sys.stderr.write(s)
+
+def Ws(s):
+    sys.stdout.write(s)
+
+class psfind:
+    def __init__(self):
+        self.int_fields = [ "PID", "PRI", "VSZ", "RSS", "SHARE",
+                            "MAJFLT", "MINFLT" ]
+        self.float_fields = [ "PCPU", "PMEM" ]
+        
+    def eval_builtins(self):
+        global hog,memhog,pig
+        hog = (PCPU > 50)
+        memhog = (VSZ > 100000)
+        pig = hog + memhog
+
+    def usage(self):
+        if os.environ.has_key("GXP_EXEC_IDX"):
+            exec_idx = int(os.environ["GXP_EXEC_IDX"])
+            if exec_idx > 0: return
+        Es(r"""usage:
+
+  psfind [--help] [expr]
+
+  expr is a python expression containing the following variables.
+
+  PID USER PCPU PMEM TIME VSZ RSS PRI NI COMMAND
+
+  ex.
+     psfind 'PCPU > 90.0'
+     psfind 'PMEM > 45.0'
+     psfind 'VSZ > 100000'
+     psfind 'USER == "root"'
+""")
+
+    def safe_atoi(self, x):
+        try:
+            return string.atoi(x)
+        except:
+            return x
+
+    def safe_atof(self, x):
+        try:
+            return string.atof(x)
+        except:
+            return x
+
+    def main(self, argv):
+        show_header = 0
+        i = 0
+        for i in range(len(argv)):
+            if argv[i] == "--help":
+                self.usage()
+                return 1
+            elif argv[i] == "--show_header":
+                show_header = 1
+            else:
+                break
+        args = argv[i:]
+        if len(args) == 0:
+            expr = "hog"
+        else:
+            expr = string.join(args, " ")
+            
+        cmd = "ps axwwo pid,user,pcpu,pmem,cutime,cstime,time,vsz,rss,majflt,minflt,pri,ni,command"
+        fp = os.popen(cmd)
+        header = fp.readline()
+        if show_header: Ws("%30s %s" % ("", header))
+        headers = string.split(header)
+        columns = len(headers)
+        if os.environ.has_key("GXP_HOSTNAME"):
+            host = os.environ["GXP_HOSTNAME"]
+        else:
+            host = "-"
+        i = 0
+        g = globals()
+        while 1:
+            line = fp.readline()
+            if line == "": break
+            fields = string.split(line, None, columns - 1);
+            if len(fields) != columns: continue
+            for i in range(columns):
+                var = headers[i]
+                val = fields[i]
+                if var[0] == "%": var = ("P%s" % var[1:])
+                if var in self.int_fields:
+                    g[var] = self.safe_atoi(val)
+                elif var in self.float_fields:
+                    g[var] = self.safe_atof(val)
+                else:
+                    g[var] = val
+            try:
+                self.eval_builtins()
+                r = eval(expr)
+            except Exception,e:
+                r = 0
+                Es("%s in expression:\n\n\t%s\n\n" \
+                   % (e.args[0], expr))
+                break
+            if r: Ws("%30s %s" % (host, line))
+        return fp.close()
+        
+def main():
+    ps = psfind()
+    ps.main(sys.argv[1:])
+
+if __name__ == "__main__":
+    sys.exit(main())

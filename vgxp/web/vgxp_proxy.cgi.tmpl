@@ -1,0 +1,49 @@
+#!/usr/bin/perl
+
+use strict;
+use IO::Socket;
+
+$SIG{PIPE} = 'DEFAULT';
+
+$| = 1;
+
+print "Cache-Control: no-cache\r\n";
+print "Content-Type: application/octet-stream\r\n\r\n";
+
+open(F, "port.txt");
+my $port = <F>;
+chomp($port);
+
+my $host = "127.0.0.1";
+#$host = "hongo300";
+my $s = IO::Socket::INET->new(PeerHost => $host,
+                              PeerPort => $port,
+                              Proto => "tcp");
+
+#open LOGFILE, ">>", "/home/kamo/work/vgxp/dev/scripts2/logs/send_time.log";
+#LOGFILE->autoflush(1);
+
+my $min_size = 0;
+
+my $l = <STDIN>;
+my $t = time;
+my $c = 0;
+my $spc = '';
+print $s $l;
+
+while(<$s>){
+  chomp;
+  print STDOUT $_, $spc, $/ || exit 0;
+  $spc = '';
+  my $t2 = time;
+  if($t != $t2){
+#    print LOGFILE "$t $c\n";
+    if($c < $min_size){
+      $spc = " " x ($min_size - $c);
+    }
+    $c = 0;
+    $t = $t2;
+  }else{
+    $c += length($_);
+  }
+}

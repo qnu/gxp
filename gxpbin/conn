@@ -1,0 +1,1117 @@
+#!/usr/bin/env python
+
+import errno,os,random,re,select,socket,string,sys,time
+
+import ifconfig2,opt2
+
+# ,graph_parse
+# from pmpi import *
+
+"""
+usage:
+
+   mw conn [OPTIONS] [command]
+
+connect processes by sockets and then invoke command.
+pass information about connections via environment variables.
+   
+"""
+
+dbg=0
+
+def Ws(s):
+    sys.stdout.write(s)
+    sys.stdout.flush()
+
+def Es(s):
+    sys.stderr.write(s)
+    sys.stderr.flush()
+
+def usage():
+    u = r"""NAME:
+   conn - connectivity checker
+
+SYNOPSIS:
+
+   mw conn [OPTIONS] [command]
+
+When run without any argument, all nodes try to connect to each other
+and report which node was able to connect to which node.  Ports are
+chosen by OS (todo: option to specify port).  When connection is blocked,
+it timeouts by 5 sec by default (use --timeout to specify other values).
+
+OPTIONS:
+
+  --timeout T      : specify timeout value in sec after which unestablished 
+                     connections are considered failed (default : 5.0).
+  --addrs_prio EXP : when hosts have multiple IP addresses, specify which 
+                     address should be preferred.  Some frequently used expressions
+                     for EXP are:
+                     g   -> to say global address should be preferred
+                     p   -> to say private address should be preferred
+                     192 -> to say addresses beginning with '192' should be preferred
+   --dbg N : (N = 1, 2, or 3).  specify verbosity level.  
+
+"""
+    Ws(u)
+
+# ----------------------------
+# graph_parse
+# ----------------------------
+
+class graph_parse_error(Exception):
+    pass
+
+class graph_parse:
+    def init(self, fp):
+        self.fp = fp
+        self.tok = None
+        self.line_no = 0
+        self.line_chars = []
+        self.c = "\n"
+        self.next_char()
+        self.next_token()
+
+    def next_char(self):
+        c = self.fp.read(1)
+        if self.c == "\n" and c != "":
+            self.line_no = self.line_no + 1
+            self.line_chars = []
+        if c != "": self.line_chars.append(c)
+        self.c = c
+
+    def skip_ws(self):
+        ws = string.whitespace
+        while 1:
+            while self.c == "#": self.skip_comment()
+            if self.c == "": break
+            if self.c not in ws: break
+            self.next_char()
+        
+    def skip_comment(self):
+        assert self.c == "#"
+        while 1:
+            if self.c == "": break
+            if self.c == "\n":
+                self.next_char()
+                break
+            self.next_char()
+        
+    def next_token(self):
+        C = []
+        ws = string.whitespace
+        self.skip_ws()
+        while 1:
+            if self.c == "": break
+            if self.c in ws: break
+            if self.c == "#": break
+            C.append(self.c)
+            self.next_char()
+        self.tok = string.join(C, "")
+        if dbg>=2: Es("next token = %s\n" % self.tok)
+        return self.tok
+
+    def eat_token(self, tok):
+        if self.tok != tok:
+            self.parse_error(tok)
+        return self.next_token()
+
+
+    def parse_error(self, expected_tok):
+        raise graph_parse_error(expected_tok,
+                                self.tok, string.join(self.line_chars, ""))
+
+    # --------------
+
+    def parse(self, fp):
+        conns = []
+        if fp is None: return conns
+        self.init(fp)
+        while self.tok != "":
+            for conn in self.parse_conn():
+                conns.append(conn)
+        return conns
+
+    def parse_file(self, filename):
+        if filename is None:
+            fp = None
+        else:
+            fp = open(filename, "rb")
+        x = self.parse(fp)
+        if fp: fp.close()
+        return x
+
+    def parse_string(self, s):
+        if s is None:
+            fp = None
+        else:
+            fp = cStringIO.StringIO(s)
+        x = self.parse(fp)
+        if fp: fp.close()
+        return x
+
+    def parse_conn(self):
+        if dbg>=2: Es("parse_conn\n")
+        proto = "tcp"                   # default protocol
+        prob = 1.0                      # default probablity
+        self.eat_token("conn")
+        if self.tok == "by":
+            proto = self.eat_token("by")
+            self.next_token()
+        A = self.parse_endpoint()
+        arrows = self.parse_arrow()
+        B = self.parse_endpoint()
+        if self.tok == "prob":
+            self.eat_token("prob")
+            prob = self.parse_float()
+        conns = []
+        if "->" in arrows:
+            conns.append((A, B, proto, prob))
+        if "<-" in arrows:
+            conns.append((B, A, proto, prob))
+        return conns
+
+    def parse_endpoint(self):
+        if dbg>=2: Es("parse_endpoint\n")
+        tok = self.tok
+        fs = string.split(tok, "=", 1)
+        if len(fs) == 2:
+            [ spec, val ] = fs
+        else:
+            [ val ] = fs
+            if len(val) > 0 and val[0] in string.digits:
+                spec = "ip"
+            else:
+                spec = "host"
+        self.next_token()
+        return (spec, val)
+
+    def parse_arrow(self):
+        arrow = self.tok
+        arrows = []
+        if arrow in [ "->", "<->" ]: arrows.append("->")
+        if arrow in [ "<-", "<->" ]: arrows.append("<-")
+        if len(arrows) == 0: self.parse_error("->,<-,<->")
+        self.next_token()
+        return arrows
+                
+    def parse_float(self):
+        if dbg>=2: Es("parse_float\n")
+        try:
+            x = string.atof(self.tok)
+        except ValueError,e:
+            self.parse_error("<float>")
+        self.next_token()
+        return x
+    
+# ----------------------------
+# pmpi
+# ----------------------------
+
+# ----------------------------
+# server socket (TCP, UDP, SSL?)
+# ----------------------------
+
+class server_sock:
+    """
+    server socket
+    """
+    def __init__(self, proto, host, addrs, env):
+        """
+        proto : tcp, udp, etc.
+        host : hostname
+        addrs : list of IP addresses
+        """
+        self.proto = proto
+        self.host = host
+        self.addrs = addrs
+        self.env = env
+        
+    def __repr__(self):
+        return (("%s(%r,%r,%r)"
+                 % (self.__class__.__name__, self.host, self.addrs, self.env)))
+    def mk(self):
+        raise
+    def ep(self):
+        raise
+    def fileno(self):
+        raise
+    def accept(self):
+        raise
+
+class server_sock_tcp(server_sock):
+    """
+    TCP server side socket
+    """
+    def __init__(self, host, addrs, env, ss):
+        server_sock.__init__(self, "tcp", host, addrs, env)
+        if ss is None:
+            ss = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+            ss.bind(("", 0))
+            ss.listen(500)
+        (_,port) = ss.getsockname()
+        self.port = port
+        self.ss = ss
+
+    def mk_env_str(self):
+        """
+        return a comma-separated list of strings to connect to this socket.
+        e.g., 12.23.34.56:4500,192.168.1.56:4500
+        """
+        A = []
+        for a in self.addrs:
+            A.append("%s:%d" % (a, self.port))
+        return string.join(A, ",")
+
+    def fileno(self):
+        return self.ss.fileno()
+
+    def mk_cs(self):
+        """
+        make client side socket to connect to this server socket
+        """
+        return sock_tcp(self.host, self.addrs, self.port, self.env, None)
+
+    def accept(self):
+        so,(addr,port) = self.ss.accept()
+        return sock_tcp(None, [ addr ], port, None, so)
+
+
+# ----------------------------
+# endpoint (TCP, UDP, SSL?)
+# ----------------------------
+
+class sock:
+    """
+    client-side socket object
+    """
+    def __init__(self, proto, host, addrs, port, env):
+        """
+        proto : tcp, udp, etc.
+        host : hostname
+        addrs : list of IP addresses to connect to
+        port : port number
+        name : my name (for debugging only)
+        """
+        self.proto = proto
+        self.host = host
+        self.addrs = addrs
+        self.port = port
+        self.env = env
+        self.nickname = "%s:%d" % (host, os.getpid())
+
+    def send(self, m):
+        raise
+    def sendall(self, m):
+        raise
+    def recv(self, n):
+        raise
+    def close(self):
+        raise
+    
+    def recv_bytes(self, n):
+        """
+        receive specified bytes
+        """
+        A = []
+        r = 0
+        while r < n:
+            try:
+                m = self.recv(n - r)
+            except socket.error,e:
+                if dbg>=1:
+                    Es("%s : %s\n" % (self.nickname, e.args))
+                self.close()
+                return None
+            if m == "":
+                if dbg>=1:
+                    Es("%s : premature EOF\n" % self.nickname)
+                self.close()
+                return None
+            A.append(m)
+            n = n - len(m)
+        return string.join(A)
+        
+    def send_header(self, sz):
+        self.sendall("%09d" % sz)
+
+    def send_msg(self, m):
+        """
+        send a message with a size header
+        """
+        body = repr(m)
+        msg = "%09d%s" % (len(body), body)
+        self.sendall(msg)
+        
+    def recv_msg(self):
+        """
+        received a message (assuming the sender sends a message with
+        a size header)
+        """
+        szs = self.recv_bytes(9)
+        if szs is None: return None
+        body = self.recv_bytes(int(szs))
+        if body is None: return None
+        return eval(body)
+
+    def set_blocking(self, x):
+        pass
+    def set_nodelay(self, x):
+        pass
+    def set_sndbuf(self, sz):
+        pass
+    def set_rcvbuf(self, sz):
+        pass
+
+class sock_tcp(sock):
+    def __init__(self, host, addrs, port, env, so):
+        sock.__init__(self, "tcp", host, addrs, port, env)
+        self.so = so
+
+    def __repr__(self):
+        return ("%s(%r,%r,%r,%r,%r)" % (self.__class__.__name__,
+                                        self.host, self.addrs,
+                                        self.port, self.env, self.so))
+
+    def mk_env_str(self):
+        return ("%d" % self.fileno())
+
+    def fileno(self):
+        if self.so is None:
+            return -1
+        else:
+            return self.so.fileno()
+
+    def fileno_w(self):
+        return self.fileno()
+
+    def fileno_r(self):
+        return self.fileno()
+
+    def connect(self):
+        so = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+        so.setblocking(0)
+        try:
+            so.connect((self.addrs[0],self.port))
+        except socket.error,e:
+            if e.args[0] != errno.EINPROGRESS: raise
+        self.so = so
+
+    def send(self, m):
+        return self.so.send(m)
+
+    def sendall(self, m):
+        return self.so.sendall(m)
+
+    def recv(self, n):
+        return self.so.recv(n)
+
+    def close(self):
+        so = self.so
+        self.so = None
+        return so.close()
+
+    def set_blocking(self, x):
+        return self.so.setblocking(x)
+        
+    def set_nodelay(self, x):
+        return self.so.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, x)
+
+    def set_sndbuf(self, sz):
+        return self.so.setsockopt(socket.SOL_TCP, socket.SO_SNDBUF, sz)
+
+    def set_rcvbuf(self, sz):
+        return self.so.setsockopt(socket.SOL_TCP, socket.SO_RCVBUF, sz)
+
+def parse_sz(s):
+    p = re.compile("(\d+)(k|m|g|t)?", re.IGNORECASE)
+    m = p.match(s)
+    n = int(m.group(1))
+    x = m.group(2)
+    if x is None: return n
+    if x == "k" or x == "K": return n * 1024
+    if x == "m" or x == "M": return n * 1024 * 1024
+    if x == "g" or x == "G": return n * 1024 * 1024 * 1024
+    if x == "t" or x == "T": return n * 1024 * 1024 * 1024 * 1024
+    assert 0
+
+class pmpi:
+    """
+    primitive message passing interface
+    """
+    def __init__(self, addr_prio):
+        self.rank = self.getrank()
+        self.host = self.gethost()
+        self.pid = self.getpid()
+        self.size = self.getsize()
+        self.addrs = self.getaddrs(addr_prio)
+        self.gupid = self.getgupid()
+        self.unique_name = "%d@%s" % (self.rank, self.gupid)
+        self.nickname = "%s:%d" % (self.host, self.pid)
+
+        env = {}
+        for k in [ "GXP_EXEC_IDX" ]:
+            env[k] = os.environ[k]
+        self.env = env
+        self.socks = {}
+        self.server_socks = []
+
+    def getrank(self):
+        return int(os.environ["GXP_EXEC_IDX"])
+
+    def getsize(self):
+        return int(os.environ["GXP_NUM_EXECS"])
+
+    def getgupid(self):
+        return os.environ["GXP_GUPID"]
+
+    def gethost(self):
+        return socket.gethostname()
+
+    def getpid(self):
+        return os.getpid()
+
+    def getaddrs(self, addr_prio):
+        return ifconfig2.get_my_addrs(addr_prio)
+
+    def add_cs(self, name, cs):
+        """
+        add a client socket
+        name : string
+        cs : client socket
+        """
+        if not self.socks.has_key(name):
+            self.socks[name] = []
+        self.socks[name].append(cs)
+
+    def add_ss(self, ss):
+        """
+        add a server socket
+        """
+        self.server_socks.append(ss)
+
+    def mk_env_str_server_socks(self, server_socks):
+        """
+        return info about server sockets, like tcp(5),udp(6)
+        """
+        E = []
+        for so in server_socks:
+            E.append("%s(%d)" % (so.proto, so.fileno()))
+        return string.join(E, ",")
+
+    def parse_env_str_server_socks(self, s):
+        """
+        inverse function of mk_env_str_server_socks
+        """
+        server_socks = []
+        for fd_s in string.split(s, ","):
+            m = re.match("([^\(]*)\((-?\d+)\)", fd_s)
+            proto,fd = m.group(1),int(m.group(2))
+            so = self.remk_server_sock(proto, fd)
+            if so: server_socks.append(so)
+        return server_socks
+
+    def mk_env_str_socks(self, socks):
+        """
+        return info about communication sockets. for each node,
+        include string like 'tcp(7/7),udp(8/8)' indicating which
+        file descriptors connect to it, with which protocol.
+        """
+        socks = socks.items()
+        socks.sort()
+        C = []
+        for name,css in socks:
+            S = []
+            for cs in css:
+                S.append(("%s(%d/%d)"
+                          % (cs.proto, cs.fileno_w(), cs.fileno_r())))
+            C.append("%s:%s" % (name, string.join(S, ",")))
+        return string.join(C, ";")
+
+    def parse_env_str_socks(self, s):
+        """
+        inverse function of mk_env_str_socks
+        """
+        ranks = {}                      # unique_name -> rank
+        socks = {}                      # unique_name -> sock
+        for name_fds in string.split(s, ";"):
+            C = []
+            # name_fds = 13:tcp(8/8),udp(9/9)
+            [ unique_name,css ] = string.split(name_fds, ":", 1)
+            [ rank_s,_ ] = string.split(unique_name, "@", 1)
+            rank = int(rank_s)
+            ranks[unique_name] = rank   # 0 -> 0@kyoto000-...
+            for cs_s in string.split(css, ","):
+                # cs_s = tcp(8/8)
+                m = re.match("([^\(]+)\((-?\d+)/(-?\d+)\)", cs_s)
+                assert m, cs_s
+                proto,s,r = m.group(1),int(m.group(2)),int(m.group(3))
+                so = self.remk_sock(proto, s, r)
+                if so: C.append(so)
+            if len(C) > 0:
+                socks[rank] = C
+        return socks,ranks
+
+    def remk_sock(self, proto, s, r, env):
+        """
+        remake socket from description like "tcp", s, r (s and r
+        are file descriptor numbers)
+        """
+        assert proto == "tcp", (proto, s, r)
+        assert s == r, (proto, s, r)
+        if s == -1: return None
+        so = socket.fromfd(s, socket.AF_INET, socket.SOCK_STREAM)
+        return sock_tcp(None, None, None, env, so)
+
+    def remk_server_sock(self, proto, fd, env):
+        """
+        remake server socket from description like "tcp", fd
+        """
+        assert proto == "tcp", (proto, fd)
+        if fd == -1: return None
+        so = socket.fromfd(fd, socket.AF_INET, socket.SOCK_STREAM)
+        return server_sock_tcp(None, None, env, so)
+
+    def export_env_str(self):
+        """
+        export info about this object to environment variable
+        """
+        s = self.mk_env_str_socks(self.socks)
+        ss = self.mk_env_str_server_socks(self.server_socks)
+        os.environ["GXP_SOCKS"] = s
+        os.environ["GXP_SERVER_SOCKS"] = ss
+
+    def import_env_str(self):
+        """
+        inverse of export_env_str
+        """
+        s = os.environ["GXP_SOCKS"]
+        ss = os.environ["GXP_SERVER_SOCKS"]
+        socks,ranks = self.parse_env_str_socks(s)
+        self.socks = socks
+        self.ranks = ranks
+        self.server_socks = self.parse_env_str_server_socks(ss)
+        if dbg>=1:
+            Es("%s : socks=%s\n" % (self.nickname, self.socks))
+            Es("%s : server_socks=%s\n" % (self.nickname, self.server_socks))
+
+    # -------------- communication functions --------------
+
+    def can_talk_to(self, to):
+        """
+        1 if directly connected to 'to'
+        """
+        return self.socks.has_key(to) and (len(self.socks[to]) > 0)
+
+    def send_some(self, to, m):
+        """
+        send some data out of m to to. may not send the whole data
+        """
+        try:
+            return self.socks[to][0].send(m)
+        except socket.error,e:
+            if e.args[0] != errno.EAGAIN: raise
+            return 0
+
+    def recv_some(self, fr, n):
+        """
+        receive up to n bytes from fr
+        """
+        try:
+            return self.socks[fr][0].recv(n)
+        except socket.error,e:
+            if e.args[0] != errno.EAGAIN: raise
+            return ""
+
+    def send_raw(self, to, m):
+        """
+        send m to to. never return prematurely.
+        """
+        return self.socks[to][0].sendall(m)
+
+    def send_raw_fp(self, to, fp, sz, chunk_sz):
+        """
+        read sz bytes (or until EOF when sz is None) from fp
+        and send it to to.
+        """
+        so = self.socks[to][0]
+        if sz is None: sz = float("inf")
+        if chunk_sz is None: chunk_sz = float("inf")
+        inf = float("inf")
+        left = sz
+        while left > 0:
+            read_sz = min(chunk_sz, left)
+            if read_sz == inf:
+                m = fp.read()
+            else:
+                m = fp.read(read_sz)
+            if m == "": break
+            so.sendall(m)
+            left = left - len(m)
+
+    def send_msg(self, to, m):
+        """
+        send m with attaching a header to to.
+        """
+        return self.socks[to][0].send_msg(m)
+
+    def send_msg_fp(self, to, fp, sz, chunk_sz):
+        """
+        send m with attaching a header to to.
+        """
+        so = self.socks[to][0]
+        so.send_header(sz)
+        return self.send_rw_fp(to, fp, sz, chunk_sz)
+
+    def recv_raw(self, fr, n):
+        """
+        receive exactly n bytes from fr.
+        """
+        return self.socks[fr][0].recv_bytes(n)
+
+    def recv_msg(self, fr, n):
+        """
+        receive a message from fr assuming a header is attached.
+        """
+        return self.socks[fr][0].recv_msg()
+
+    def set_blocking(self, x):
+        """
+        set blocking flag of all sockets to x
+        """
+        for css in self.socks.values():
+            for cs in css: cs.set_blocking(x)
+
+    def set_nodelay(self, x):
+        """
+        set no-delay flag of all sockets to x
+        """
+        for css in self.socks.values():
+            for cs in css: cs.set_nodelay(x)
+
+    def set_sndbuf(self, sz):
+        """
+        set send buf size to sz
+        """
+        for css in self.socks.values():
+            for cs in css: cs.set_sndbuf(sz)
+
+    def set_rcvbuf(self, sz):
+        """
+        set recv buf size to sz
+        """
+        for css in self.socks.values():
+            for cs in css: cs.set_rcvbuf(sz)
+
+# ----------------------------
+# options
+# ----------------------------
+
+class connectall_cmd_opts(opt2.cmd_opts):
+    def __init__(self):
+        #             (type, default)
+        # types supported
+        #   s : string
+        #   i : int
+        #   f : float
+        #   l : list of strings
+        #   None : flag
+	opt2.cmd_opts.__init__(self)
+        self.addrs_prio = ("s", "")
+        self.remove_dups = ("i", 1)
+        self.blocking = ("i", 1)
+        self.nodelay = ("i", 0)
+        self.sndbuf = ("i", None)
+        self.rcvbuf = ("i", None)
+        self.connect_rules = ("s", None)
+        self.default_prob = ("f", 1.0)
+        self.timeout = ("f", 10.0)
+        self.dbg = ("i", 0)
+        self.help = (None, 0)
+
+    def postcheck(self):
+        # "10.1,10.2" --> [ re.compile("10.1"), re.compile("10.2") ]
+        prio,msg = ifconfig2.compile_prio(self.addrs_prio)
+        if prio is None:
+            Es("conn : %s\n" %  msg)
+            return -1
+        self.addrs_prio = prio
+        return 0
+
+# ----------------------------
+# global state
+# ----------------------------
+class node_state:
+    def init(self):
+        global dbg
+        # parse options
+        opts = connectall_cmd_opts()
+        if opts.parse(sys.argv[1:]) == -1: return -1
+        if opts.help:
+            if os.environ.get("GXP_EXEC_IDX", "0") == "0":
+                usage()
+            return -1
+        dbg = opts.dbg
+        self.opts = opts
+        # file objs to exchange via gxp
+        self.wp = os.fdopen(3, "wb")
+        self.fp = os.fdopen(4, "rb")
+        # misc info.
+        self.pm = pmpi(opts.addrs_prio)
+        # of connections to accept
+        self.n_to_accept = None
+        # server sockets
+        self.sss = []
+        # client sockets (name -> [ so ])
+        self.css = {}
+        # list of sockets to issue connections
+        self.to_connect = []
+        # so -> None. set of sockets for which connections are in progress
+        self.connecting = {}
+        # so -> None. set of sockets that have become writable
+        self.writable = {}
+        # so -> None. set of sockets created as a result of accept, but
+        # have not received any byte from
+        self.half_accepted = {}
+        # final results. 
+        self.connected = {}             # rank -> [ so ]
+        self.accepted = {}              # rank -> [ so ]
+        self.failed = {}                # rank -> [ so ]
+        self.start_time = time.time()
+        return self
+
+    def __str__(self):
+        return ("%s : %.3f : %d connecting %d writable %d half_accepted"
+                " %d connected %d accepted %d to_accept" 
+                % (self.pm.nickname, self.cur_time(), 
+                   len(self.connecting), len(self.writable),
+                   len(self.half_accepted), len(self.connected), 
+                   len(self.accepted), self.n_to_accept))
+
+    def cur_time(self):
+        return time.time() - self.start_time
+
+    # ----------------------------
+    # open server side socket
+    # ----------------------------
+
+    def bind_and_listen(self):
+        p = self.pm
+        self.sss = [ server_sock_tcp(p.host, p.addrs, p.env, None) ]
+        if dbg>=3: 
+            Es("%s : %s\n" % (p.nickname, self.sss))
+        elif dbg>=1: 
+            Es("%s : %s\n" % (p.nickname, string.join(p.addrs, " ")))
+        
+    # ----------------------------
+    # exchange endpoints (all-to-all)
+    # ----------------------------
+
+    def all_to_all(self, msg):
+        self.wp.write("%s\n" % (msg,))
+        self.wp.flush()
+        M = []
+        for i in range(self.pm.size):
+            M.append(eval(string.strip(self.fp.readline())))
+        return M
+
+    def xchg_endpoints(self):
+        """
+        exchange endpoint info
+        """
+        if self.pm.rank == 0:
+            connect_rules = self.parse_connect_rules(self.opts.connect_rules)
+        else:
+            connect_rules = None
+        # make a list of client sockets
+        my_css = map(lambda x: x.mk_cs(), self.sss)
+        msg = (self.pm.unique_name, my_css, connect_rules)
+        if dbg>=3:
+            Es("%s : exchanging endpoints %s\n" % (self.pm.nickname, msg))
+        # exchange it with everybody
+        S = self.all_to_all(msg)
+        S.sort()                        # sort by their ranks
+        for unique_name,css,rules in S:
+            if dbg>=3:
+                Es("%s : %s -> %s\n" % (self.pm.nickname, unique_name, css))
+            self.css[unique_name] = css
+            if rules is not None:
+                self.connect_rules = rules
+        assert self.connect_rules is not None
+
+    def req_connect(self, unique_name, cs):
+        self.to_connect.append((unique_name,cs))
+
+    def parse_connect_rules(self, connect_rules_file):
+        p = graph_parse()
+        return p.parse_file(connect_rules_file)
+
+    def match_src(self, condition):
+        spec,val = condition
+        pat = re.compile(val)
+        p = self.pm
+        if spec == "ip":
+            for a in p.addrs:
+                if pat.match(a): return 1
+            return 0
+        elif spec == "host":
+            if pat.match(p.host): return 1
+            return 0
+        elif spec == "gxp_exec_idx":
+            if pat.match(p.env["GXP_EXEC_IDX"]): return 1
+            return 0
+        else:
+            return 0
+
+    def match_dest(self, condition, proto, cs):
+        spec,val = condition
+        pat = re.compile(val)
+        if cs.proto != proto: return 0
+        if spec == "ip":
+            for a in cs.addrs:
+                if pat.match(a): return 1
+            return 0
+        elif spec == "host":
+            if pat.match(cs.host): return 1
+            return 0
+        elif spec == "gxp_exec_idx":
+            if pat.match(cs.env["GXP_EXEC_IDX"]): return 1
+            return 0
+        else:
+            return 0
+
+    def get_connect_probability(self, cs, rules, default_prob):
+        # from list of rules, return the probability with which
+        # this process should connect to cs
+        # each rule looks like:
+        #  (('ip', '133'), ('ip', '133'), 'tcp', 1.0)
+        for fr,to,proto,prob in rules:
+            if self.match_src(fr) and self.match_dest(to, proto, cs):
+                return prob
+        return default_prob
+
+    def gen_rand(self):
+        return random.random()
+
+    def request_connects(self):
+        rules = self.connect_rules
+        default_prob = self.opts.default_prob
+        for unique_name,css in self.css.items():
+            for cs in css:
+                prob = self.get_connect_probability(cs, rules, default_prob)
+                if prob == 1.0 or (prob > 0.0 and self.gen_rand() < prob):
+                    self.req_connect(unique_name, cs)
+
+    def xchg_to_connect(self):
+        """
+        exchange info about who is connecting who, so 
+        each process know how many processes are connecting
+        to it
+        """
+        S = self.all_to_all((self.pm.unique_name,self.to_connect))
+        n = 0
+        for src,to_connect in S:
+            for dst,cs in to_connect:
+                if dst == self.pm.unique_name:
+                    n = n + 1
+        return n
+
+    # ----------------------------
+    # issue connect asynchronously
+    # ----------------------------
+
+    def issue_connects(self):
+        while self.to_connect:
+            unique_name,cs = self.to_connect.pop(0)
+            if dbg>=3:
+                Es(("%s : issueing connection to %s %s\n"
+                    % (self.pm.nickname, unique_name, cs)))
+            cs.connect()
+            self.connecting[cs] = unique_name
+
+    # socket() -> connecting -> writable -> connected
+    # accept() -> half_accepted -> accepted
+
+    def handle_events(self):
+        if dbg>=2:
+            Es("%s\n" % self)
+        self.issue_connects()
+        R_ = self.sss + self.writable.keys() + self.half_accepted.keys()
+        W_ = self.connecting.keys()
+        if dbg>=3:
+            Es("%s : R_=%s W_=%s\n" % (self.pm.nickname, R_, W_))
+        # need to refine this
+        if len(R_) == len(self.sss) and len(W_) == 0 \
+               and len(self.accepted) == self.n_to_accept:
+            return 0
+        # wait for
+        # (1) issueing connections to become writable,
+        # (2) writable connections to get response (become readable), or
+        # (3) server sockets to get connection requests
+        R,W,_ = select.select(R_, W_, [], 2.0)
+        for w in W:
+            # connecting -> writable
+            if dbg>=3:
+                Es("%s : -> writable to %s\n" % (self.pm.nickname, w))
+            w.set_blocking(1)
+            self.writable[w] = self.connecting[w]
+            del self.connecting[w]
+        for r in R:
+            if r in self.sss:
+                # new socket -> accepted
+                so = r.accept()
+                if dbg>=3:
+                    Es(("%s : -> half accepted from %s:%s\n" 
+                        % (self.pm.nickname, so.addrs, so.port)))
+                self.half_accepted[so] = None
+                # tell the connector 
+                so.send_msg(self.pm.unique_name)
+            elif r in self.writable:
+                # writable -> connected
+                unique_name = r.recv_msg()
+                _unique_name = self.writable[r]
+                del self.writable[r]
+                if unique_name is None:
+                    if dbg>=3:
+                        Es(("%s : -> failed %s\n"
+                            % (self.pm.nickname, unique_name)))
+                    if not self.failed.has_key(unique_name):
+                        self.failed[unique_name] = []
+                    self.failed[unique_name].append(r)
+                else:
+                    if dbg>=3:
+                        Es(("%s : -> connected %s\n"
+                            % (self.pm.nickname, unique_name)))
+                    assert unique_name == _unique_name, (unique_name, _unique_name)
+                    if not self.connected.has_key(unique_name):
+                        self.connected[unique_name] = []
+                    self.connected[unique_name].append(r)
+                    r.send_msg(self.pm.unique_name)
+            else:
+                # half_accepted -> accepted
+                unique_name = r.recv_msg()
+                del self.half_accepted[r]
+                if dbg>=3:
+                    Es(("%s : -> accepted from %s\n"
+                        % (self.pm.nickname, unique_name)))
+                if unique_name is None:
+                    if dbg>=3:
+                        Es(("%s : -> failed %s\n"
+                            % (self.pm.nickname, unique_name)))
+                    if not self.failed.has_key(unique_name):
+                        self.failed[unique_name] = []
+                    self.failed[unique_name].append(r)
+                else:
+                    if dbg>=3:
+                        Es(("%s : -> accepted %s\n"
+                            % (self.pm.nickname, unique_name)))
+                    if not self.accepted.has_key(unique_name):
+                        self.accepted[unique_name] = []
+                    self.accepted[unique_name].append(r)
+        # 2010/3/2
+        if len(R) == 0 and len(W) == 0 and self.cur_time() > self.opts.timeout:
+            for w in self.connecting.keys():
+                name = "%s:%d" % (w.host, w.port)
+                if not self.failed.has_key(name):
+                    self.failed[name] = []
+                self.failed[name].append(w)
+            return 0
+        else:
+            return 1
+        if 0:
+            if len(R_) == len(self.sss) and len(W_) == 0 and len(R) == 0:
+                assert len(self.accepted) < self.n_to_accept
+                if dbg>=2:
+                    Es("%s : quit leaving some connections\n" % self.pm.nickname)
+                return 0
+            else:
+                return 1
+
+    def remove_dups(self):
+        """
+        if both A -> B and B -> A are connected, remove one
+        """
+        for unique_name,css in self.accepted.items():
+            if self.connected.has_key(unique_name) \
+                   and self.pm.unique_name <= unique_name:
+                for cs in css: cs.close()
+                del self.accepted[unique_name]
+        for unique_name,css in self.connected.items():
+            if self.accepted.has_key(unique_name) \
+                   and unique_name < self.pm.unique_name:
+                for cs in css: cs.close()
+                del self.connected[unique_name]
+
+    def show_pmpi_socks(self):
+        p = self.pm
+        connected = self.connected.items()
+        accepted = self.accepted.items()
+        failed = self.failed.items()
+        connected.sort()
+        failed.sort()
+        accepted.sort()
+        for unique_name,socks in connected:
+            for cs in socks:
+                Ws("OK : %s -> %s (%s:%d)\n" 
+                   % (p.host, cs.host, cs.addrs[0], cs.port))
+        for unique_name,socks in failed:
+            for cs in socks:
+                Ws("NG : %s -> %s (%s:%d)\n" 
+                   % (p.host, cs.host, cs.addrs[0], cs.port))
+
+    def set_pmpi_socks(self):
+        """
+        make a primitive mpi object
+        """
+        p = self.pm
+        # add server sockets
+        for ss in self.sss:
+            p.add_ss(ss)
+        # add client sockets
+        # we could add failed items here,
+        # but it is in most cases annoying 
+        # + self.failed.items()):
+        for unique_name,socks in (self.connected.items()
+                                  + self.accepted.items()):
+            for cs in socks:
+                p.add_cs(unique_name, cs)
+        # set options (non-blocking, no-delay, snd/rcv buf)
+        p.set_blocking(self.opts.blocking)
+        p.set_nodelay(self.opts.nodelay)
+        if self.opts.sndbuf is not None:
+            p.set_sndbuf(self.opts.sndbuf)
+        if self.opts.rcvbuf is not None:
+            p.set_rcvbuf(self.opts.rcvbuf)
+        # set environment variables
+        p.export_env_str()
+
+    def main(self):
+        if self.init() == -1: return 1
+        # make server-side sockets
+        self.bind_and_listen()
+        # exchange address/port information
+        self.xchg_endpoints()
+        # request connections
+        self.request_connects()
+        # exchange who connects who
+        self.n_to_accept = self.xchg_to_connect()
+        # where main work is done
+        while self.handle_events():
+            pass
+        # we are essentially done. 
+        if dbg>=2:
+            Es("%s\n" % self)
+        if len(self.opts.args) == 0:
+            self.show_pmpi_socks()
+        else:
+            # if A -> B and B -> A, remove one
+            if self.opts.remove_dups: self.remove_dups()
+            self.set_pmpi_socks()
+            # finally execute program
+            os.execvp(self.opts.args[0], self.opts.args)
+
+def main():
+    node_state().main()
+
+if __name__ == "__main__":
+    sys.exit(main())

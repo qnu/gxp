@@ -1,0 +1,377 @@
+[[Documents]]
+
+* Distributed file sharing via GXP + Fuse
+
+#contents
+
+** Status
+
+It turned out there is a significant limitation that needs an
+examination. See [[Known Problems>#known_problems]] for details.
+
+** Introduction
+A simple program `mount_all' is installed as
+$GXP_DIR/gxpbin/mount_all, which allows hosts to share their
+directories solely via Fuse (sshfs, and unionfs for some modes of
+sharing). Specifically, the following three modes of sharing are
+supported.
+
+- A single root host can export a directory to be read/written by all
+hosts ('''&color(red){all-mount-one}; ''' operation).
+
+- All hosts export directories to be read/written by a single root
+host ('''&color(red){one-mounts-all}; ''' operation). 
+Directories exported by these hosts
+appear a single directory in the root host, thanks to unionfs.
+
+- By combining the above two, all hosts export directories to be
+read/written by all hosts ('''&color(red){all-mount-all}; ''' operation).
+
+
+** all-mount-one: All hosts mount one host
+
+Here is how you can share one host's directory among all hosts.  This
+mode of file sharing is convenient for sharing small files (e.g.,
+programs you are developing). Since all contents will be written to
+the one host, it is NOT suitable for sharing directories actively
+written by computations.
+
+
+*** Prerequisites
+Let's call the one host (mounted by all) the '''server''' 
+and all others '''clients.'''
+
+- Clients must have sshfs installed (install sshfs package via apt-get, 
+yum, etc., or [[build from src:http://fuse.sourceforge.net/sshfs.html]])
+
+//- If you wish to make the directory to share and the mountpoint
+//different on the server, then the server needs 
+//[[unionfs-fuse>>http://podgorny.cz/moin/UnionFsFuse]].
+
+- All hosts (the server and the clients) must be able to sshfs each
+other, or you may write a configuration file ([[edge file>#edge_file]]) to
+specify between which hosts it will succeed.
+
+*** Try it
+
+- Explore as many hosts as you like via GXP.
+
+- Make sure the directory you like to share exists on the
+server. Let's assume the directory is /dir/to/share
+
+- Then do:
+
+    mw mount_all -a a1 server:/dir/to/share
+
+Replace `server' part by the hostname of your server.  This command
+will mount the server's directory /dir/to/share on all the clients'
+/dir/to/share. On clients, they will be created if they do not
+exist. If they exist, they must be empty. `a1' stands for '''a'''ll
+(hosts) mount '''1''' (host).
+
+- You are done!  Now /dir/to/share of all hosts (including
+that of the server) serve as a shared directory. The contents will be
+on the server no matter who write to that directory.
+
+- See below for [[how to unmount>#unmount]].
+
+*** Examples and options:
+
+Here are some examples.  See also [[common options>#common_options]]
+for options common to all operations.
+
+- You can specify a mountpoint different from the directory to share
+by giving two arguments.
+
+  mw mount_all -a a1 server:/dir/to/share /mount/point
+
+will mount /dir/to/share of the server to /mount/point of all clients
+and the server. The server accomplishes this by sshfs to itself.  If
+you don't like it, you may install
+[[unionfs-fuse:http://podgorny.cz/moin/UnionFsFuse]] on the server and
+give --server_uses_unionfs option.
+
+- If you omit `server:' part of the argument, it defaults to the host
+whose GXP_EXEC_IDX is zero.
+
+  mw mount_all -a a1 /dir/to/share
+
+will mount /dir/to/share of the 0th host to /dir/to/share of all clients.
+
+- You may separately specify the server host by --root_host.
+
+  mw mount_all -a a1 --root_host server /dir/to/share /mount/point
+
+is equivalent to:
+
+  mw mount_all -a a1 server:/dir/to/share /mount/point
+
+
+** one-mounts-all: One host mounts all hosts
+
+Here is how you can access all hosts' directories on a single mount
+point of a single root host. 
+
+*** Prerequisites
+Let's call the one host the '''root''' 
+and all others '''peers.'''
+
+- The root and peers must have sshfs (install sshfs package via
+apt-get, yum, etc., or [[build from
+src:http://fuse.sourceforge.net/sshfs.html]]) and unionfs-fuse
+([[build from src:>>http://podgorny.cz/moin/UnionFsFuse]]).  When 
+building unionfs-fuse, it seems you must compile it for 64 bit platforms
+and 32 bit platforms separately.
+
+- All hosts (the server and the clients) must be able to sshfs each
+other, or you may write a configuration file ([[edge file>#edge_file]]) to
+specify between which hosts it will succeed.
+
+*** Try it
+
+- Explore as many hosts as you like via GXP.
+
+- Make sure the directories you like to export exist on all
+hosts. For now, they must be the same path. 
+Let's assume the directory is /dir/to/share.
+
+- Then do:
+
+    mw mount_all -a 1a /dir/to/share root:/mount/point
+
+Replace `root' part by the hostname of your root host.  This command
+will mount the peers' directories /dir/to/share on the root's
+/mount/point. If /mount/point does not exist, it will be created.
+Note that all /dir/to/share directories are merged.
+
+- You are done!  Now /dir/to/share of all hosts are visible in
+the root host, under /mount/point.
+
+- See below for [[how to unmount>#unmount]].
+
+*** Examples and options:
+
+Here are some other examples and options.
+
+- If you omit `root:' part of the argument, it defaults to the host
+whose GXP_EXEC_IDX is zero.
+
+  mw mount_all -a 1a /dir/to/share /mount/point
+
+will mount /dir/to/share of all hosts on /mount/point of the root host.
+
+- You can separately specify the server host by --root_host.
+
+  mw mount_all -a 1a --root_host server /dir/to/share /dir/to/mount
+
+is equivalent to:
+
+  mw mount_all -a 1a /dir/to/share server:/dir/to/mount
+
+
+** all-mount-all: All hosts mount all hosts
+
+This is essentially the combination of the above two. A single host
+first mounts exported directories of all hosts on its intermediate
+mount point, and all hosts then mount the intermediate mount point on
+their final mount points.
+
+
+*** Prerequisites
+
+- All hosts must have sshfs (install sshfs package via
+apt-get, yum, etc., or [[build from
+src:http://fuse.sourceforge.net/sshfs.html]]) and unionfs-fuse
+([[build from src:>>http://podgorny.cz/moin/UnionFsFuse]]).
+When building unionfs-fuse, it seems you must compile it for 64 bit platforms
+and 32 bit platforms separately.
+
+- All hosts (the server and the clients) must be able to sshfs each
+other, or you may write a configuration file ([[edge file>#edge_file]]) to
+specify between which hosts it will succeed.
+
+*** Try it
+
+- Explore as many hosts as you like via GXP.
+
+- Make sure the directories you like to export exist on all
+hosts. For now, they must be the same path. 
+Let's assume the directory is /dir/to/share.
+
+- Then do:
+
+    mw mount_all -a aa /dir/to/share /mount/point
+
+This command will mount all hosts' directories /dir/to/share on all
+hosts' /mount/point. If /mount/point does not exist, it will be
+created.  Note that all /dir/to/share directories are merged.
+
+- You are done!  Now /mount/point of all hosts are shared.
+
+- See below for [[how to unmount>#unmount]].
+
+*** Examples and options:
+
+Here are some other examples and options.
+
+- You may specify the intermediate host and directory by giving three
+arguments. 
+
+  mw mount_all -a aa /dir/to/share root:/intermediate/point /mount/point
+
+will first mount /dir/to/share of all hosts on the /intermediate/point
+of the root host, and then mount it on all hosts' /mount/point.
+
+- You can separately specify the root host on which the intermediate mount
+is performed by --root_host.
+
+  mw mount_all -a aa --root_host server /dir/to/share /intermediate/point /dir/to/mount
+
+is equivalent to:
+
+  mw mount_all -a aa /dir/to/share root:/intermediate/point /mount/point
+
+&aname(unmount);
+** Unmount all fuse-mounted directories you made.
+
+  mw mount_all -a u 
+
+will examine the hosts' /etc/mtab file and unmount all directories
+that appear to have been created by you with fuse, regardless whether
+they are mounted by the mount_all command or not. This design is
+largely for the sake of implementation simplicity (mount_all does not
+maintain any state by itself) and in part for the clarity to the user
+(she can also make sure at any time that her directories are "clean").
+
+Note: due to dependencies among directories, it may not able to
+unmount all mountpoints in a single stroke (see for the output).  You
+will see messages saying '''Device is busy''' or something when it
+happens. If that happens, just repeat the same command line until no
+error messages will be displayed.
+
+&aname(edge_file);
+** Configuration file (Edge file)
+
+By default, it assumes clients and the server can sshfs between any
+pair of hosts. If this is not the case, you need to write a file
+specifying which hosts can sshfs which hosts. By default, it tries
+to read the file `edges' in the current directory. You may specify 
+it via --config option.
+
+Here is an example:
+
+  suzuk kyoto000 10
+  kyoto kyoto 1
+  kyoto 1
+  .* .*000 10
+
+The first line reads:
+
+> Hosts that begin with `suzuk' will be able to sshfs kyoto000, with cost 10.
+
+Each hostname is a regular expression that is matched against the
+hostname of hosts (the output of 'hostname -f'. Note that contrary
+to what the manual says, it is not necessarily an FQDN).
+
+Likewise, the second line specifies hosts beginning with `kyoto'
+can sshfs among each other.
+
+Lines having the second hostname field, it reads as if the second
+field is equivalent to the first field.  So, the third line (kyoto 1)
+is equivalent to the second line.
+
+The forth line signifies that the first two fields are regexps.
+It reads, 
+
+> Any host can login any host whose name includes `000'.
+
+&aname(mount_table_file);
+** Mount table file
+
+Instead of giving export directory and the mount every time you run
+mount_all, you can write a simple file describing them 
+('''mount table file'''). A line in the file has one to three fields,
+and it is read as if they are given in the command line. For example,
+if you write in the file
+
+  /dir/to/share server:/dir/to/mount
+
+and run
+
+  mw mount_all -a a1
+
+it is as though you run
+
+  mw mount_all -a a1 /dir/to/share server:/dir/to/mount
+
+The file interprets the '#' character as beginning of a comment.  If
+the file has two or more non-comment lines, only the first line is in
+effect.
+
+The file is read only when mount_all is given no positional arguments.
+When it reads the mount table file, the file given by --tab option,
+"mount_all_tab" in the current directory, and ~/.mount_all_tab are
+searched in this order and the one found first will be used. 
+
+&aname(common_options);
+** Common Options
+
+: -n or --check_only |
+is a check-only run. 
+
+  mw mount_all -a a1 -n server:/dir/to/share
+
+will only check the environment to see if the operations, if
+performed, would succeed (e.g., the /dir/to/share exists on the server,
+it exists or can be created as a directory on clients, sshfs is
+available, etc.) The recommended practice is to first check your
+command line with -n and then really execute it (unmounting is also easy.
+see below for [[how to unmount>#unmount]]).
+
+: -v 1 or --verbosity 1 |
+will show who will do which mount (sshfs) operations.
+
+: --config FILE |
+specifies a configuration file specifying which
+hosts can sshfs which hosts, with --config option.
+
+  mw mount_all -a a1 --config alt_edges server:/dir/to/share
+
+By default, it will search `mount_all_edges' in the current directory,
+`.mount_all_edges' in your home directory in this order and uses
+whichever is found first.  If neither is found, it uses the default
+rule saying any host can ssh any host.
+
+: --tab FILE |
+specifies a mount table file.
+
+: --children N |
+specifies the number of children each non-leaf host approximately
+tries to have.
+
+: --sshfs_opt ''key=val,key=val,..'' |
+will pass -o key=val,key=val,... to sshfs.
+
+: --unionfs_opt ''key=val,key=val,..'' |
+will pass -o key=val,key=val,... to unionfs.
+
+: --fuse_opt ''key=val,key=val,..'' |
+will pass -o key=val,key=val,... to both sshfs and unionfs.
+
+
+&aname(known_problems);
+** Known problems
+
+When you modify a file and clients read it next time, some will fail
+with mysterious ''Permission denied'' error messages. When they read
+again, they are typically OK this time. I will examine this later.
+
+There will be many problems around interactions with caches. Cache
+seem effective even when we given suitable options (-o cache=no) to
+sshfs. Some means must be invented to predict or control their caching
+behaviors.
+
+Worse, it turned out that recursive mount seems not working.  That is,
+if A is a fuse mountpoint, recursively mounting A by fuse does not
+work. The only workaround I can suggest at this point is not to use
+more than fifteen hosts with -a a1 option.

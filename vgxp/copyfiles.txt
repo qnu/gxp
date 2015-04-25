@@ -1,0 +1,8 @@
+# <apply_template?> <from> <to>
+1 %SCRIPT_DIR%/web/%JNLPNAME1%.tmpl         %INSTALL_DIR%/%JNLPNAME1%
+1 %SCRIPT_DIR%/web/%JNLPNAME2%.tmpl         %INSTALL_DIR%/%JNLPNAME2%
+1 %SCRIPT_DIR%/web/%PROXYCGI_FILENAME%.tmpl %INSTALL_DIR%/%PROXYCGI_FILENAME%
+1 %SCRIPT_DIR%/web/index.html.tmpl          %INSTALL_DIR%/index.html
+0 %SCRIPT_DIR%/web/vgxp.jar                 %INSTALL_DIR%
+0 %SCRIPT_DIR%/web/vgxpconf.xml             %INSTALL_DIR%
+0 %SCRIPT_DIR%/web/.htaccess                %INSTALL_DIR%

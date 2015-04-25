@@ -1,0 +1,274 @@
+#!/usr/bin/env python
+import commands
+import getopt
+import os
+import random
+import string
+import stat
+import sys
+import time
+import threading
+import Queue
+import signal
+import popen2
+
+"""
+python worker.py hostname
+
+- read stdin until EOF.
+- each line should look like
+    hostname<tab>output_file<tab>command line
+"""
+
+child_pid = -1
+
+def E(s):
+    sys.stderr.write(s)
+    sys.stderr.flush()
+
+def foo():
+    E("...\n")
+    time.time()
+    E("...\n")
+
+class worker:
+    dbg = 0
+    def __init__(self, hostname, input_q, output_dir):
+        self.input_q = input_q
+        self.output_dir = output_dir
+#        self.to_master_fp = sys.stdout
+        self.to_master_fp = os.fdopen(3, "w")
+        self.name = hostname
+        self.childpid = -1
+
+    def run(self):
+        if self.name is None:
+            self.name = self.guess_hostname()
+        self.ensure_dir(self.output_dir)
+        try:
+            n_workers = safe_atoi(os.environ["GXP_NUM_EXECS"])
+
+            self.write_to_master("avail %s %d" % (self.name, n_workers))
+            while 1:
+                cmd,dest,args = self.input_q.get()
+                if cmd is None: break
+                if dest != self.name: continue
+                assert cmd == "task"
+                [ taskname, cmdline ] = string.split(args, None, 1)
+                info = self.do_task(taskname, cmdline)
+                self.write_to_master("avail %s %d" % (self.name, n_workers))
+                self.write_to_master("status %s %s" % (taskname, info))
+        except IOError,e:
+            E("%s : %s\n" % (self.name, e.args))
+            pass
+
+    def write_to_master(self, line):
+        if worker.dbg: E("%s : %s\n" % (self.name, line))
+        self.to_master_fp.write(line + "\n")
+        self.to_master_fp.flush()
+
+    def guess_hostname(self):
+        if not os.environ.has_key("GXP_EXEC_IDX"):
+            E("GXP_EXEC_IDX is not set")
+            sys.exit(1)
+        if os.environ.has_key("GXP_HOSTNAME"):
+            return string.strip(os.environ["GXP_HOSTNAME"] + "_" + os.environ["GXP_EXEC_IDX"])
+        s,hostname = commands.getstatusoutput("hostname")
+        if s == 0:
+            return string.strip(hostname) + "_" + os.environ["GXP_EXEC_IDX"]
+        E("hostname not given nor can be inferred (hostname command not available)")
+        sys.exit(1)
+
+    def ensure_dir(self, path):
+        """
+        ensure directory PATH exists, creating its ancestors if necessary
+        """
+        if path != "" and not os.path.exists(path):
+            self.ensure_dir(os.path.dirname(path))
+            self.ensure_dir_1(path)
+
+    def ensure_dir_1(self, dire):
+        """
+        ensure directory DIRE exists, assuming its direct parent directory
+        exists.
+        i.e., if dire = 'a/b/c', we assume a/b exists
+        """
+        if not os.access(dire, os.F_OK):
+            try:
+                os.mkdir(dire)
+            except OSError:
+                pass
+        if not os.access(dire, os.F_OK):
+            E("Output directory %s does not exist and could not create it\n" \
+              % dire)
+            os._exit(1)
+        s = os.stat(dire)
+        if not stat.S_ISDIR(s[0]):
+            E("%s is not a directory %s\n" % dire)
+            sys.exit(1)
+        if not os.access(dire, os.W_OK):
+            E("Directory %s not writable\n" % dire)
+            sys.exit(1)
+
+    def do_task(self, taskname, cmdline):
+        file = os.path.join(self.output_dir, taskname)
+        self.ensure_dir(os.path.dirname(file))
+	status = os.system("nicer --exit-silently > /dev/null 2> /dev/null")
+        if 0 and os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0:
+            # cmd = "nicer -i 10 -l 5 %s > %s.out 2> %s.err" % (cmdline, file, file)
+            cmd = "nicer %s > %s.out 2> %s.err" % (cmdline, file, file)
+	else:
+            cmd = "nice -19 %s > %s.out 2> %s.err" % (cmdline, file, file)
+        E(self.name + " : " + cmd + "\n")
+        t0 = time.time()
+        status,_ = commands.getstatusoutput(cmd) # 2007.8.8
+        #status = my_getstatusoutput(cmd)
+        t1 = time.time()
+        S = "%d %.2f %s %s" % (status, t1 - t0, self.name, file)
+        return S
+
+#def my_getstatusoutput(cmd):
+#    p = popen2.Popen3(cmd, True)
+#    # Give True as the second argument and stderr and stdout are separated 
+#    child_pid = p.pid
+#    return p.wait()
+
+def stdin_eat(Q):
+    from_master = os.fdopen(4, "r")
+    try:
+        while 1:
+            try:
+                line = from_master.readline()
+            except IOError,e:
+                E("%s : master seems to be dead\n" % self.name)
+                return
+            if line == "":
+                break
+            fs = string.split(string.strip(line), None, 2)
+            if len(fs) < 2:
+                E("break\n")
+                break
+            elif len(fs) == 2:
+                [ cmd, dest ] = fs
+                args = ""
+            else:
+                [ cmd, dest, args ] = fs
+            Q.put((cmd, dest, args))
+            # WORKAROUND: on cygwin, if we omit the following sleep,
+            # the worker appears to hang (deadlocks?)...
+            # time.sleep(0.5)
+    finally:
+        #TODO: Need to signal to children??
+        # E("worker going to exit\n" )
+        Q.put((None, None, None))
+        # from_master.close()
+
+
+def safe_atoi(s):
+    try:
+        n = string.atoi(s)
+        return n
+    except ValueError:
+        return None
+
+
+def parse_args(args):
+    try:
+        opts,args = getopt.getopt(args[1:], "",
+                                  [ "hostname=", "output=", "sleep=", "random_sleep=",
+                                    "help" ])
+    except getopt.GetoptError:
+        usage()
+    if len(args) != 0:
+        usage()
+    d = { "--hostname" : None, "--output" : "output", "--sleep" : "0", "--help" : None, "--random_sleep" : "0" }
+    for o,a in opts:
+        d[o] = a
+    if d["--help"] is not None: usage()
+    sleep_time = safe_atoi(d["--sleep"])
+    if sleep_time is None: usage()
+    random_sleep_time = safe_atoi(d["--random_sleep"])
+    if random_sleep_time is None: usage()
+    return d["--hostname"],d["--output"],sleep_time,random_sleep_time
+
+def usage():
+    E("usage : python %s OPTIONS\n" % sys.argv[0])
+    E("OPTIONS :\n")
+    E("  --hostname hostname\n")
+    E("  --output output_directory\n")
+    E("  --sleep initial_sleep_time\n")
+    os._exit(2)
+
+
+
+def catch_sig(sig, frame):
+    assert child_pid > 0
+    try:
+        os.kill(-child_pid, signal.SIGKILL)
+    except OSError,e:
+        pass
+    # sys.exit(1)
+
+def set_sig_handlers():
+    signal.signal(signal.SIGINT,  catch_sig)
+    signal.signal(signal.SIGTERM,  catch_sig)
+    signal.signal(signal.SIGHUP,  catch_sig)
+    signal.signal(signal.SIGQUIT, catch_sig)
+
+#
+# Ugly : python thread will block all signals. 
+# This is inherited to processes forked by the
+# thread. Thus, all processes created by gxp_mom
+# (i.e., processes specified in tasks file) will not
+# block all signals (except for KILL).
+# This makes it tricky to kill them by Ctrl-C.
+
+# THE RIGHT FIX is to get rid of threads.
+
+# But for now, the main thread spawns a child process
+# that does all the work. The child process also leads a 
+# process group. The main thread simply waits
+# for the child process to finish. Meanwhile, it
+# responses to SIGINT by sending SIGKILL to the
+# child process group. This way, all descendants get
+# killed by SIGKILL. Ugly.
+
+
+def decide_sleep_time(sleep_time, random_sleep_time):
+    rg = random.Random()
+    sd = os.environ.get("GXP_EXEC_IDX", 1) * os.getpid()
+    rg.seed(sd)
+    return sleep_time + rg.randint(0, random_sleep_time)
+
+def main():
+    global child_pid     
+    child_pid = os.fork()
+    if child_pid == -1:
+        raise "Failed to fork"
+
+    if child_pid == 0:
+        os.setpgrp()
+        hostname,output_dir,sleep_time,random_sleep_time = parse_args(sys.argv)
+        time.sleep(decide_sleep_time(sleep_time, random_sleep_time))
+        input_q = Queue.Queue(0)
+        w = worker(hostname, input_q, output_dir)
+        threads = [ threading.Thread(target=stdin_eat, args=(input_q, )),
+                    threading.Thread(target=w.run, args=()) ]
+        for th in threads:
+            th.start()
+
+        for th in threads:
+            th.join()
+    else:
+        assert child_pid > 0
+        set_sig_handlers()
+        if 0:
+            from_master = os.fdopen(4, "r")
+            while not from_master.closed:
+                E("from_master.closed = %s\n" % from_master.closed)
+                time.sleep(0.5)
+        else:
+            os.waitpid(child_pid, 0)
+        # catch_sig(None, None)
+
+main()

@@ -1,0 +1,575 @@
+#!/usr/bin/env python
+
+import signal,popen2,sys,os,time,re,getopt
+
+dbg = 0
+
+def Es(s):
+    sys.stderr.write((" " + s))
+    sys.stderr.flush()
+
+
+class PS:
+    """ Obtain information about processes"""
+    def __init__(self, env):
+        self.env = env
+        self.pcpu = 0.0
+        self.ourPcpu = 0.0
+
+
+    def update(self):
+        """ Call ps and parse the result """
+        #TODO: support the other kind of PSes
+        self.pcpu = 0.0
+        self.ourPcpu = 0.0
+        
+        p = popen("TERM=vt100 top -b -n 1")
+        m = re.compile("\s*PID")
+        flag = False
+        for l in p.fromchild.readlines():
+            if not flag :
+                if m.search(l) is not None: flag = True
+                continue
+            
+            (pid,uname,ni,pcpu,s) = self.parse(l)
+            if pid is None: continue
+            if pid in self.env.procs:
+                self.ourPcpu += pcpu
+                continue
+            if ni >= self.env.ignoreNice: continue
+            #if uname == self.env.me: continue
+            if uname in self.env.poorUsers: continue
+            self.pcpu += pcpu
+        pclose(p)
+
+        
+        rests = self.env.procs.keys()
+        p = popen("TERM=vt100 ps -eo pid,state --no-headers")
+        for l in p.fromchild.readlines():
+            ptn = re.compile("(\d+)\s+(\S+)")
+            mo = ptn.search(l)
+            if mo is None: continue
+            pid = int(mo.group(1))
+            s = mo.group(2)
+            if pid in self.env.procs:
+                rests.remove(pid)
+                if s == "Z": self.env.procs[pid] = False
+        pclose(p)
+
+        for pid in rests:
+            if dbg >= 1:
+                Es("Info: removing process %d from job list\n"%(pid))
+            self.env.procs.pop(pid)
+
+
+        
+    def parse(self, l):
+        #2 root      RT   0     0    0    0 S  0.0  0.0 291:16.52 migration/0
+        if l is None: return ([None]*5)
+        l = l.rstrip()
+        #                     (PID)   (USER)  PR    (NI)    VIRT  RES  SHR (S)        (%CPU)         %MEM       TIME+  (COMMAND)
+        ptn = re.compile("\s*(\d+)\s+(\S+)\s+\S+\s+(\S+)\s+\S+\s+\S+\s+\S+\s+(\S+)\s+(\d+)\.(\d+)\s+\d+\.\d+\s+\S+\s+([^\n]*)")
+        mo = ptn.match(l)
+        if mo is None:
+            return ([None]*5)
+            #if dbg >= 1:
+            #Es("Can't parse %s\n"%(l))
+            #sys.exit(1)
+        
+        pid = int(mo.group(1))
+        user = mo.group(2)
+        nice_string = mo.group(3)
+        s = mo.group(4)
+        pcpu = int(mo.group(5)) + 0.01 * float(mo.group(6))
+        
+        if "-" in nice_string:
+            # "-" means realtime processes 
+            ni = 0
+        else:
+            ni = int(nice_string)
+        return (pid,user,ni,pcpu,s)
+
+
+        
+
+    def search(self, name):
+        rets = []
+        p = popen("ps -eo pid,uname,command --no-headers")
+        for l in p.fromchild.readlines():
+            ptn = re.compile("(\d+)\s+(\S+)\s+([^\n]+)")
+            mo = ptn.search(l)
+            if mo is None: continue
+            pid = int(mo.group(1))
+            uname = mo.group(2)
+            command = mo.group(3)
+            if re.search("nicer",command): continue
+            if re.search(name,command) and uname == self.env.me: # re.match(command, name)
+                rets.append(pid)
+        pclose(p)
+        return rets
+    
+
+class W:
+    """ Obtain information about users"""
+    def __init__(self, env):
+        self.nUsers = 0
+        self.env = env
+
+        
+    def update(self):
+        nUsers = 0
+        p = popen("w -hs")
+        for l in p.fromchild.readlines():
+            (uid,idle) = self.parse(l)
+            if uid == self.env.me:
+                continue
+            if uid in self.env.poorUsers: 
+                continue
+            if uid not in self.env.vipUsers:
+                if idle >= self.env.maxIdle:
+                    continue
+            nUsers += 1
+        pclose(p)
+        self.nUsers = nUsers
+
+    
+    def parse(self, l):
+        assert l != ""
+        ptn = re.compile("^\s*(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.+)\s*")
+        mo = ptn.match(l)
+        if mo is None:
+            Es("Err: cannot parse %s"%(l))
+            assert False
+        uid  = mo.group(1)
+        #term = mo.group(2)
+        #host = mo.group(3)
+        idle = self.parse_idle(mo.group(4))
+        #cmd  = mo.group(5)
+        #return {'uid':uid, 'idle':idle}
+        return (uid, idle)
+
+
+    def parse_idle(self, st):
+        mo = re.search("(\d+)days", st)
+        if mo is not None:
+            d = int(mo.group(1))
+            return d * 24 * 60 * 60
+        mo = re.search("(\d+):(\d+)m", st)
+        if mo is not None:
+            h = int(mo.group(1))
+            m = int(mo.group(2))
+            return (h * 60 + m)* 60
+        mo = re.search("(\d+).(\d+)s", st)
+        if mo is not None:
+            ud = int(mo.group(1))
+            ld = int(mo.group(2))
+            return ud
+        mo = re.search("(\d+):(\d+)", st)
+        if mo is not None:
+            m = int(mo.group(1))
+            s = int(mo.group(2))
+            return m * 60 + s
+        Es("*** Error : illegal format of time %s\n"%st)
+        sys.exit(1)
+
+
+
+class Env(object):
+    def __init__(self, args):
+        self.setDefaults()
+        self.setWorkVars()
+        self.getopt(args)
+        
+
+    def setDefaults(self):
+        self.pcpuDown = 33.3 # CPU % : To make child process down
+        self.pcpuUp = 25.0   # CPU % : To make child process up 
+
+        self.ignoreNice = 19      # Don't ignore any processes other than NI == 19
+        self.poorUsers = []
+        self.vipUsers = []
+        self.shortSleep = 2.0
+        self.longSleep = 32.0
+        # Assume the user is idle 
+        self.maxIdle = 10
+
+
+    def setWorkVars(self):
+        self.procs = {}
+        self.attach = None
+        self.me = os.environ["USER"]
+        
+        self.nCPUs = self.getNCPUs()
+        # peek counter
+        self.maxPeeks = 5
+        # Assume ready to run if the condition is satisfied 'max_peeks' times
+        self.peek = 0
+        #self.pcpu = 100.0 * self.nprocs
+        
+        self.stopflag = False
+        self.childStatus = 0
+
+    
+    def getopt(self,args):
+        try:
+            opts, args = getopt.getopt(args[1:], "a:hv:c:i:",
+                                       ["exit-silently", "vip-users", "ignore-users", "help", "attach"])
+        except getopt.GetoptError:
+            self.usage()
+            print "(Given option: ",
+            for a in args[1:]:
+                print '"%s" '%(a),
+            print ")"
+            sys.exit(2)
+
+        for o, a in opts:
+            if o == "--exit-silently":
+                sys.exit(0)
+            elif o in ("-h", "--help"):
+                self.usage()
+            elif o in ("-a", "--attach"):
+                self.attach = a
+            elif o in ("-v", "--vip-users"):
+                users = a.split(",")
+                for u in users:
+                    self.vipUsers.append(u)
+            elif o in ("-i", "--ignore-users"):
+                users = a.split(",")
+                for u in users:
+                    self.poorUsers.append(u)
+        if self.attach is None:
+            if len(args) == 0:
+                Es("Error: Command is not specified\n")
+                self.usage()
+                sys.exit(1)
+            else:
+                self.command = args[0]
+                if ";" in self.command:
+                    self.command = "sh -c '%s\'"%self.command
+                self.runargs = args
+        else:
+            if len(args) > 0:
+                Es("Info: Given command(%s) is neglected\n"%(args[0]))
+
+
+    def usage(self):
+        print "Usage: nicer [options] command\n"
+        print " Options: "
+        print "     -a, --attach PATTERN    : Attach to processes whose names match to the PATTERN"
+        print "     -i, --ignore-users USER1,USER2,... : Ignore specified users. "
+        print "     -v, --vip-users USER1,USER2,...    : "
+        print "     -h, --help : Show this help"
+        print ""
+
+        
+
+    def printOpts(self):
+        for a in self.__dict__:
+            print a,self.__dict__[a]
+        
+
+    def cmd_exist(self, cmd):
+        l = exec_cmd("which %s"%(cmd))
+        if l == "":
+            Es("Nicer: Command not found (%s)\n"%(cmd))
+            sys.exit(1)
+
+
+    def chk_system(self):
+        """Check if system() is available"""
+        if os.system("") != 0:
+            Es("'os.system()' does not work\n")
+            sys.exit(1)
+
+
+    def getNCPUs(self):
+        """Read /proc/cpuinfo, and check how many procs are available"""
+        n = 0
+        ptn = re.compile("^processor")
+        try:
+            f = open("/proc/cpuinfo")
+            while True:
+                l = f.readline()
+                if not l: break
+                mo = ptn.match(l)
+                if mo is not None:
+                    n += 1
+            f.close()
+            if n == 0:
+                Es("Notice: No processors found from /proc/cpuinfo\n")
+                return 1
+            else:
+                return n
+        except:
+            # assume only one processor is available
+            Es("Notice: /proc/cpuinfo is not available\n")
+            return 1
+
+
+
+def popen(cmd):
+    p = popen2.Popen3(cmd)
+    if p is None:
+        Es("Err: cannot execute '%s'\n"%(cmd))
+        sys.exit(1)
+    return p
+
+
+def pclose(p):
+    p.fromchild.close()
+    p.tochild.close()
+    os.waitpid(p.pid, 0)
+
+
+def exec_cmd(self, cmd):
+    fp = self.popen(cmd)
+    s = fp.readline().rstrip()
+    fp.close()
+    return s
+                
+
+
+def test():
+    env = Env(sys.argv)
+    env.printOpts()
+    w = W(env)
+    w.update()
+    print "nusers = ", w.nUsers
+
+
+
+class ProcManager:
+    """ Manage job processes """
+    def __init__(self, env):
+        self.env = env
+
+
+    def killall(self):
+        if dbg >= 1: Es("Info: Killall\n")
+        ks = self.env.procs.keys()
+        for p in ks:
+            self.kill(-p, signal.SIGKILL)
+            self.waitpid(p)
+            self.env.procs.pop(p)
+            
+
+    def killZombies(self):
+        keys = self.env.procs.keys()
+        for p in keys:
+            if not self.env.procs[p]:
+                self.waitpid(p)
+                self.env.procs.pop(p)
+                if dbg >= 1: Es("Info: Collected one zombi(%d)\n"%(p))
+        
+
+    def cont(self):
+        if dbg >= 1: Es("Info: Now ready to continue\n")
+        for p in self.env.procs:
+            self.kill(-p, signal.SIGCONT)
+         
+
+    def stop(self):
+        if dbg >= 1: Es("Info: Stopping procs\n")
+        for p in self.env.procs:
+            self.kill(-p, signal.SIGSTOP)
+
+
+    ### Private functions come after here:
+    def attachTo(self, proc):
+        self.env.procs[proc] = True
+
+
+    def kill(self, pid, signal):
+        try:
+            os.kill(pid, signal)
+        except:
+            Es("Error: Senfing signal %d to %d failed\n"%(signal, pid))
+    
+    def waitpid(self, pid):
+        if dbg >= 1: Es("Info: Waitpid %d\n"%(pid))
+        try:
+            qid,stat = os.waitpid(pid, 0)
+        except:
+            Es("Error: child process has already been dead\n")
+        assert pid == qid, (pid, qid)
+        if pid == self.env.childPid:
+            env = self.env
+            if os.WIFEXITED(stat):
+                env.childStatus = os.WEXITSTATUS(stat)
+            elif os.WIFSIGNALED(stat):
+                env.childStatus = os.WTERMSIG(stat) + 128
+
+    def launch(self, cmd, args):
+        child = os.fork()
+        if child == -1:
+            Es("Error: during fork()\n")
+            self.killall()
+                
+        if child == 0:
+            if os.setpgrp() == -1:
+                Es("Error: Cannot execute 'setpgrp()'\n")
+                self.killall()
+                sys.exit(1)
+            if dbg >= 1:
+                Es("Info: lanuch the command")
+            try:
+                os.execvp(cmd, args)
+            except Exception, e:
+                Es("Error: cannot execute command %s\n"%(cmd))
+                Es("      %s\n"%(str(e)))
+            # Cannot reach here
+            sys.exit(0)
+        else:
+            self.env.procs[child] = True
+            self.env.childPid = child
+            #if not self.env.runnable:
+            #    self.kill(-child, signal.SIGSTOP)
+
+
+
+###########
+
+
+class Nicer:
+    def __init__(self):
+        self.env = Env(sys.argv)
+        self.ps = PS(self.env)
+        self.w = W(self.env)
+        self.procman = ProcManager(self.env)
+        self.set_sig_handlers()
+        self.running = False
+        self.sleeptime = self.env.shortSleep
+        os.nice(19)
+    
+
+    def set_sig_handlers(self):
+        signal.signal(signal.SIGTSTP, self.catch_sig)
+        signal.signal(signal.SIGHUP, self.catch_sig)
+        signal.signal(signal.SIGQUIT, self.catch_sig)
+        signal.signal(signal.SIGINT, self.catch_sig)
+
+
+
+    def catch_sig(self, sig, frame):
+        #TODO: implement reasonable behaviors
+        if sig == signal.SIGTERM \
+                    or signal.SIGQUIT \
+                    or signal.SIGINT:
+            if dbg >= 1:
+                Es("Got signal.. stopping\n")
+            self.procman.killall()
+            self.env.stopflag = True #for nicer
+        elif sig == SIGHUP:
+            return
+        else:
+            Es("Ignoring signal %d", sig)
+            return
+
+
+    def runnable(self):
+        cpuLoad = self.ps.pcpu
+        nUsers = self.w.nUsers
+        if dbg >= 1:
+            Es("Info: # of users = %d\n"%(nUsers))
+            Es("Info: CPU load = %f\n"%(cpuLoad))
+        if nUsers != 0:
+            if dbg >= 1: Es("Info: interavtive users exist\n")
+            return False
+
+        if self.running:
+            if cpuLoad > self.env.pcpuDown:
+                if dbg >= 1:
+                    Es("Info: CPU load (%d) is higher than the threshold (%d)\n"%(cpuLoad, self.env.pcpuDown))
+                return False
+            else:
+                return True
+
+        else:
+            if cpuLoad > self.env.pcpuUp:
+                return False
+            else:
+                if dbg >= 1:
+                    Es("Info: CPU load (%d) is smaller than the threshold (%d)\n"%(cpuLoad, self.env.pcpuUp))
+                return True
+
+
+
+    def main(self):
+        if self.env.attach == None:
+            self.procman.launch(self.env.command, self.env.runargs)
+        else:
+            pids = self.ps.search(self.env.attach)
+            if pids == []:
+                Es(("Error: process named `%s' was not found\n"
+                    % (self.env.attach)))
+            for p in pids:
+                self.procman.attachTo(p)
+        
+        self.running = True
+                
+        while True:
+            if dbg >= 2:
+                Es("Loop\n")
+            self.ps.update()
+            self.w.update()
+            if self.env.stopflag: break
+
+            if not self.running and self.ps.ourPcpu > 10.0:
+                Es("Error: Child process is supposed to be stopped, \
+                but consuming %d\% CPU \n"%(self.ps.ourPcpu))
+                self.procman.killall()
+                sys.exit(2)
+
+            self.procman.killZombies()
+            if len(self.env.procs) == 0:
+                if dbg >= 1:
+                    Es("Every process has exitted\n")
+                break
+
+
+            if self.runnable():
+                if self.running:
+                    pass
+                else:
+                    if dbg >= 2: Es("Info: peek counter = %d\n"%(self.peek))
+                    if self.sleeptime > self.env.shortSleep:
+                        if dbg >= 1:
+                            Es("Info: Setting sleep time to %d\n"%(self.sleeptime))
+                        self.sleeptime /= 2
+                    else:
+                        self.peek += 1
+                        if self.peek >= self.env.maxPeeks:
+                            self.running = True
+                            self.procman.cont()
+                            
+            else: # Not runnable
+                if self.running:
+                    self.procman.stop()
+                    self.running = False
+                self.peek = 0
+                self.sleeptime = self.env.longSleep
+                
+            time.sleep(self.sleeptime)
+            
+        self.procman.killall()
+        if dbg >= 1:
+            Es("Exitting\n")
+        # sys.exit(0)
+        sys.exit(self.env.childStatus)
+
+
+def main():
+    nicer = Nicer()
+    nicer.main()
+
+main()
+
+#env.procs[11404] = True
+#env.printOpts()
+#ps = PS(env)
+#print env.procs[11404]
+#ps.update()
+#print env.procs[11404]
+#if __name__ == "__main__":
+#    sys.exit(test())
+

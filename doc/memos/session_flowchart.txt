@@ -1,0 +1,37 @@
+
+
+  find_or_create_session()
+            |
+look for specified session (find_session())?
+       /    |     \
+   >1 /    1|      \0
+     /      |       \
+error      OK  --session or GXP_SESSION 
+               specified?
+                  /     \
+              yes/       \no
+                /         \
+            error  check --create_session 
+                        /   \
+                     <0/     \>=0
+                      /       \
+                 error    find_or_create_daemon()
+                              |
+                       look for specified daemon (find_daemon_addrs())?
+                        /     |     \
+                    >1 /     1|      \0
+                      /       |       \
+                  error      OK   --daemon or GXP_DAEMON specified?
+                        new session    /     \
+                                      /       \
+                                     /         \
+                                 yes/           \no
+                                   /             \
+                               error    check --create_daemon
+                                              /     \
+                                           <0/       \>=0
+                                            /         \
+                                        error     create_daemon()
+                                                       |
+                                                       OK
+                                                   new session

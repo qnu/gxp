@@ -1,0 +1,560 @@
+#!/usr/bin/env python
+
+from sched_common import *
+import commands
+import getopt
+import Queue
+import errno,os,random,re,select,socket,string,sys,time,struct,stat,threading,signal
+
+
+# The main routine starts from here...
+child_pid = -1
+
+def ensure_dir(path):
+    """
+    ensure directory PATH exists, creating its ancestors if necessary
+    """
+    if path is None or path == "":
+        assert False
+    #Es("** Ensuring %s\n"%(path))
+    if os.access(path, os.F_OK):
+        ensure_dir_1(path)
+    elif path != "/":
+        ensure_dir(os.path.dirname(path))
+        ensure_dir_1(path)
+
+
+def ensure_dir_1(dire):
+    """
+    ensure directory DIRE exists, assuming its direct parent directory
+    exists.
+    i.e., if dire = 'a/b/c', we assume a/b exists
+    """
+    if not os.access(dire, os.F_OK):
+        try:
+            os.mkdir(dire)
+        except OSError:
+            pass
+    if not os.access(dire, os.F_OK):
+        Es("Output directory %s does not exist and could not create it\n" \
+          % dire)
+        os._exit(1)
+    s = os.stat(dire)
+    if not stat.S_ISDIR(s[0]):
+        Es("%s is not a directory %s\n" % dire)
+        sys.exit(1)
+    if not os.access(dire, os.W_OK):
+        Es("Directory %s not writable\n" % dire)
+        sys.exit(1)
+
+
+
+
+class Communicator: # OK
+    """ Communicate to the master """
+    def __init__(self, self_test=False):
+        self.name = string.strip(os.environ["GXP_HOSTNAME"])
+        self.idx  = safe_atoi(os.environ["GXP_EXEC_IDX"])
+        
+        self.addr = ifconfig().get_my_addrs()[0]
+        if not self_test:
+            self.to_master = os.fdopen(3, "w")
+            self.from_master = os.fdopen(4, "r")
+        else:
+            self.to_master = sys.stdout
+            self.from_master = sys.stdin
+        self.task_q = Queue.Queue(0)
+        self.send_q = Queue.Queue(0)
+        self.recv_q = Queue.Queue(0)
+
+
+    def write(self, line):
+        if debug >= 2:
+            Es("%s :issued %s\n" % (self.name, line))
+        self.to_master.write(line + "\n")
+        self.to_master.flush()
+
+
+    def read(self):
+        try:
+            while 1:
+                cmd,args = self.readOne()
+                #Es("READONED: %s, %s\n"%(cmd, args))
+                if cmd == "task":
+                    self.task_q.put((cmd, args))
+                    if debug >= 3:
+                        Es("%s: put to task_q (cmd=%s, args=%s)\n"%(self.name,cmd,args))
+                elif cmd == "wait":
+                    self.task_q.put((cmd, args))
+                    if debug >= 3:
+                        Es("%s: put to task_q (cmd=%s, args=%s)\n"%(self.name,cmd,args))
+                elif cmd == "send":
+                    self.send_q.put((cmd, args, None)) # The last field: taskname
+                    if debug >= 3:
+                        Es("%s: put to send_q (cmd=%s, args=%s)\n"%(self.name,cmd,args))
+                elif cmd == "recv":
+                    self.recv_q.put((cmd, args))
+                    if debug >= 3:
+                        Es("%s: put to recv_q (cmd=%s, args=%s)\n"%(self.name,cmd,args))
+                elif cmd == "abort_recv":
+                    self.recv_q.put((cmd, args))
+                    if debug >= 3:
+                        Es("%s: put to recv_q (cmd=%s, args=%s)\n"%(self.name,cmd,args))
+                elif cmd == None:
+                    break
+                else:
+                    assert False
+                    #pass
+                
+                # WORKAROUND: on cygwin, if we omit the following sleep,
+                # the worker appears to hang (deadlocks?)...
+                # time.sleep(0.5)
+                
+        except IOError,e:
+            Es("%s: IOError occurred \n"%(self.name))
+            sys.exit(1)
+        self.task_q.put((None, None))
+        self.send_q.put((None, None, None))
+        self.recv_q.put((None, None))
+        if debug >= 2:
+            Es("%s: received empty line, going to exit\n"%(self.name))
+
+
+    def readOne(self):
+        dameCount = 0
+        while 1:
+            line = self.from_master.readline()
+            if line == "":
+                if dameCount < 100:
+                    dameCount += 1
+                    continue
+                break
+            fs = string.split(string.strip(line), None, 2)
+            if len(fs) < 2:
+                break
+            elif len(fs) == 2:
+                [ cmd, dest ] = fs
+                args = ""
+            else:
+                [ cmd, dest, args ] = fs
+                dest_idx = safe_atoi(dest)
+            if dest_idx == None:
+                Es("%s: Fatal error... idx is not numeric(%s)\n"%(self.name,line))
+                sys.exit(1)
+            if dest_idx != self.idx: continue
+            return cmd, args
+        return None, None
+
+
+class Sender:
+    def __init__(self, comm, dirman, pkt_size = 1024, initial_port = 10000):
+        self.comm = comm
+        self.dirman = dirman
+        self.pkt_size = pkt_size
+        self.ss = ServerSocket(initial_port)
+        self.issued = []
+        self.cond = threading.Condition()
+
+    def finalize(self):
+        self.ss.close()
+
+    def run(self):
+        try:
+            while True:
+                cmd,args,taskname = self.comm.send_q.get()
+                if cmd is None:
+                    if debug >= 2:
+                        Es("%s: Sender exitting.\n"%(self.comm.name))
+                    break
+                if cmd == "send":
+                    self.process_send(args, taskname)
+                else: 
+                    assert False
+        except IOError,e:
+            Es("%s : IOError\n" % self.comm.name)
+
+
+    def process_send(self, args, taskname):
+        """ Process the send request (from the master)"""
+        # line is like: (send) (idx) to_host fileURI
+        # (send) (10) 123.4.56.7 111.11.1.10:/home/kay/hoge
+        to_host,fileURI = args.split(None, 1)
+        filepath = self.dirman.uri_to_filepath(fileURI)
+        assert self.ss is not None
+        
+        if not os.path.exists(filepath):
+            Es("%s: ** Error: Cannot find the file %s\n"%(self.comm.name,filepath))
+            self.comm.write("cmd_transfer %d abort_recv %s %s %s"\
+                            %(self.comm.idx, to_host, self.comm.addr, fileURI))
+            if debug >= 1:
+                Es("----SEND FAILED (%s)----\n"%args)
+            return
+        
+        # cmd_transfer recv to_hostname from_hostname port fileURI
+        self.comm.write("cmd_transfer %d recv %s %s %d %s"\
+                        %(self.comm.idx,to_host,self.comm.addr,self.ss.port,fileURI))
+
+        if taskname is not None:
+            self.cond.acquire()
+            self.issued.append(taskname)
+            self.cond.notify()
+            self.cond.release()
+            
+        # Accept and send filesize 
+        fp = open_for_read(filepath)
+        filesize = os.stat(filepath)[stat.ST_SIZE]
+        if debug >= 2:
+            Es("Sender(%s): filesize = %d kb\n"%(self.comm.name, filesize/1024))
+        sock = self.ss.accept()
+        sock.sendInt(filesize)
+
+        # Send data
+        sentsize = 0
+        t0 = time.time()
+
+        while sentsize < filesize:
+            s = filesize - sentsize
+            if s > self.pkt_size: s = self.pkt_size
+            buf = fp.read(s)
+            if len(buf) == 0: break
+            sock.send(buf)
+            sentsize += len(buf)
+        # After treat
+        assert sentsize == filesize
+        fp.close()
+        sock.close()
+        t1 = time.time()
+        self.comm.write("status send %d %s" % (self.comm.idx,fileURI))
+        if debug >= 1:
+            bps = float(filesize)/float(t1-t0) * 8
+            Es("%s : sent %s\n t = %5.3f sec, %5.3f Mbps\n"%(self.comm.name, fileURI, (t1-t0), bps/1024/1024))
+
+
+
+class Receiver:
+    def __init__(self, comm, dirman, pkt_size = 1024):
+        self.comm = comm
+        self.dirman = dirman
+        self.pkt_size = pkt_size
+        self.files = {}
+        self.cond = threading.Condition()
+        self.files = {}
+
+    
+    def run(self):
+        try:
+            while True:
+                cmd,args = self.comm.recv_q.get()
+                if cmd is None: 
+                    if debug >= 2:
+                        Es("%s: Receiver exitting.\n"%(self.comm.name))
+                    break
+                if cmd == "recv":
+                    self.process_recv(args)
+                elif cmd == "abort_recv":
+                    self.process_abort(args)
+                else:
+                    Es("%s: invalid cmd(%s) in the recv_q\n"%(self.comm.name,cmd))
+                    assert False
+        except IOError,e:
+            Es("%s : IOError\n" % self.comm.name)
+
+
+    def process_recv(self, args):
+        #   (recv) (23) istbs000 50000 123.4.56.7:/data/hoge
+        send_host,port_s,fileURI = string.split(args, None, 3)
+        port = safe_atoi(port_s)
+        # Prepare sock
+        sock = Socket()
+        sock.connect(peer=(send_host, port))
+        if debug >= 2:
+            Es("Trying to connect to %s:%d\n"%(send_host, port))
+        filesize = sock.recvInt()
+        if debug >= 1:
+            Es("Filesize: %d\n"%(filesize))
+
+        # Prepare file
+        filepath = self.dirman.uri_to_filepath(fileURI)
+        ensure_dir(os.path.dirname(filepath))
+        fp = open_for_write(filepath)
+        
+        t0 = time.time()
+        # Receive data
+        rcvdsize = 0
+        while rcvdsize < filesize:
+            s = filesize - rcvdsize
+            if s > self.pkt_size: s = self.pkt_size
+            buf = sock.rawrecv(s)
+            if len(buf) == 0:
+                Es("Connection reset by peer\n")
+                sys.exit(1)
+            rcvdsize += len(buf)
+            fp.write(buf)
+        assert rcvdsize == filesize
+        t1 = time.time()
+
+        # Mark as transfered
+        self.cond.acquire()
+        self.files[fileURI] = True
+        self.cond.notify()
+        self.cond.release()
+        bw = int(filesize * 8 / (t1 - t0) / 1000 / 1000)
+        # status rcvd exitcode from_hostname to_hostname filepath bandwidth
+        self.comm.write("status recv %d 0 %s %s %s -> %s, bw=%d" % (self.comm.idx, send_host,self.comm.name,fileURI,filepath,bw))
+
+
+
+    def process_abort(self, args):
+        if debug >= 1:
+            Es("%s: received recv_abort msg (%s)\n"%(self.comm.name,args))
+        #   (abort_transfer) (23) istbs000 istbs000+_data_hoge
+        send_host,fileURI = string.split(args, None, 1)
+        self.cond.acquire()
+        self.files[fileURI] = False
+        self.cond.notify()
+        self.cond.release()
+        # status rcvd exitcode from_hostname to_hostname filepath bandwidth
+        self.comm.write("status abort_recv %d 1 %s %s %s" % (self.comm.idx, send_host,self.comm.name,fileURI))
+
+
+    def waitfor(self, fileURI):
+        #NOTE: Do not consider abortion after starting transfers
+        if debug >= 3:
+            Es("%s: Waiting for %s\n"%(self.comm.name,fileURI))
+        self.cond.acquire()
+        while fileURI not in self.files:
+            self.cond.wait()
+        status = self.files[fileURI]
+        self.cond.release()
+        if debug >= 3:
+            Es("%s: Ready %s\n"%(self.comm.name,fileURI))
+        return status
+
+
+class DirMan:
+    def __init__(self, base):
+        self.current_dir = "%s/%s"%(base, self.getTimeStr())
+        self.filedir = "%s/files"%(self.current_dir)
+        #self.outputdir = "%s/outputs"%(self.current_dir)
+        ensure_dir(self.filedir)
+        #ensure_dir(self.outputdir)
+        self.hostnames = self.getHostnames()
+
+        
+    def getHostnames(self):
+        hostname = socket.gethostname()
+        hosts = socket.gethostbyaddr(hostname)
+        ret = []
+        ret.append(hostname)
+        ret.append(hosts[0])
+        for h in hosts[1]:
+            ret.append(h)
+        for h in hosts[2]:
+            ret.append(h)
+        return ret
+        
+
+    def getTimeStr(self):
+        return "%04d_%02d_%02d-%02d_%02d_%02d"%time.localtime()[0:6]
+
+
+    def uri_to_filepath(self, uri):
+        addr,filepath =uri.split(":")
+        if addr in self.hostnames:
+            return filepath
+        else:
+            return self.filedir + "/" + (addr + "+" + filepath.replace("/", "_"))
+
+
+    def uri_is_local(self, uri):
+        addr,filepath =uri.split(":")
+        return addr in self.hostnames
+
+
+
+
+class Worker:
+    #debug = 0
+    def __init__(self):
+        self.comm = Communicator()
+        
+        # Send the "worker" message
+        n_workers = safe_atoi(os.environ["GXP_NUM_EXECS"])
+        self.comm.write("worker %d %s %s %d" % \
+                        (self.comm.idx, self.comm.addr, self.comm.name, n_workers))
+        cmd,basedir = self.comm.readOne()
+        self.dirman = DirMan(basedir)
+        self.sender = Sender(self.comm, self.dirman)
+        self.receiver = Receiver(self.comm, self.dirman)
+
+        
+    def setFilenames(self, task):
+        s = task.cmd
+        for i,f in enumerate(task.reqs):
+            filepath = self.dirman.uri_to_filepath(f)
+            s = s.replace("$R%d"%i, filepath)
+            
+        for i,f in enumerate(task.gens):
+            filepath = self.dirman.uri_to_filepath(f)
+            if s.find("$W%d"%i) == -1:
+                raise 
+            s = s.replace("$W%d"%i, filepath)
+
+        return s
+    
+
+    def run(self):
+        try:
+            while True:
+                cmd,args = self.comm.task_q.get()
+                if cmd is None:
+                    if debug >= 2:
+                        Es("%s: Worker thread exitting.\n"%(self.comm.name))
+                    break
+                if cmd == "task":
+                    task = Task(args)
+                    flag = True
+                    for f in task.reqs:
+                        if self.dirman.uri_is_local(f):
+                            fn = string.split(f, ":", 1)[1]
+                            file_exists = os.path.exists(fn)
+                            flag &= file_exists
+                        else:
+                            transfer_success = self.receiver.waitfor(f)
+                            flag &= transfer_success
+                    if not flag:
+                        # file was not ready, so aborted the task
+                        
+                        self.comm.write("status task %d %s 1 0 %s -" % (self.comm.idx, task.name, self.comm.name))
+                        continue
+                    cmdline = self.setFilenames(task)
+                    
+                    if cmdline == None:
+                        Es("Invalid command in the queue\n")
+                        self.comm.write("status task %d %s 1 0 %s -" % (self.comm.idx, task.name, self.comm.name))
+                        continue
+                        
+
+                    # Actually do the task
+                    info = self.do_task(task.name, cmdline)
+
+                    issued = False
+                    for f in task.gens:
+                        addr,_ = f.split(":")
+                        #Es("*** Src: %s, Dest : %s"%(self.comm.addr, addr))
+                        if addr != self.comm.addr:
+                            issued = True
+                            arg = "%s %s"%(addr, f)
+                            if debug >= 2:
+                                Es("%s : the output file is scheduled to be transfered (arg = %s)\n"
+                                   %(self.comm.name, arg))
+                            self.comm.send_q.put(("send", arg, task.name))
+                    # TODO: watch transfer status
+                    if issued:
+                        self.sender.cond.acquire()
+                        while task.name not in self.sender.issued:
+                            self.sender.cond.wait()
+                        self.sender.cond.release()
+                    
+                    self.comm.write("status task %d %s %s" % (self.comm.idx,task.name, info))
+                    
+                else:
+                    Es("Invalid cmd in the queue : <%s %s>\n"%(cmd, args))
+                    assert False
+                    
+            for f in self.receiver.files:
+                if not self.dirman.uri_is_local(f):
+                    filepath = self.dirman.uri_to_filepath(f)
+                    if debug >= 2:
+                        Es("%s : Removing temporary file %s\n"%(self.comm.name, filepath))
+
+                    if os.path.exists(filepath):
+                        os.remove(filepath) 
+            
+        except IOError,e:
+            Es("%s : IOError\n" % self.comm.name)
+            self.comm.write("")
+            pass
+
+
+
+    def do_task(self, taskname, cmdline):
+        #f = self.dirman.outputdir + "/" + taskname
+        f = self.dirman.filedir + "/" + taskname
+	status = os.system("nicer --exit-silently > /dev/null 2> /dev/null")
+        if os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0:
+            nicer_str = "nicer"
+        else:
+            nicer_str = "nice -19"
+        if cmdline.find(">") != -1:
+            stdout_str = "> %s.out"%f
+        cmd = "%s %s %s 2> %s.err" % (nicer_str, cmdline, nicer_str, f)
+        Es("%s: executing [%s]\n"%(self.comm.name, taskname))
+        if debug >= 1:
+            Es("cmdline: %s\n"%(cmd))
+        t0 = time.time()
+        status,_ = commands.getstatusoutput(cmd)
+        t1 = time.time()
+        S = "%d %.2f %s %s" % (status, t1 - t0, self.comm.name, f)
+        return S
+
+
+
+def usage(): # OK
+    Es("usage : python %s OPTIONS\n" % sys.argv[0])
+    os._exit(2)
+
+
+def catch_sig(sig=None, frame=None):
+    assert child_pid > 0
+    os.kill(-child_pid, signal.SIGKILL)
+    sys.exit(1)
+
+
+def set_sig_handlers():
+    signal.signal(signal.SIGINT,  catch_sig)
+    signal.signal(signal.SIGTERM, catch_sig)
+    signal.signal(signal.SIGHUP,  catch_sig)
+    signal.signal(signal.SIGQUIT, catch_sig)
+
+
+def main():
+    global child_pid
+    #port = random.random()
+    parent_pid = os.getpid()
+    
+    child_pid = os.fork()
+    if child_pid == -1:
+        raise "Failed to fork"
+    
+    if child_pid == 0:
+        os.setpgrp()
+        #hostname,output_dir,sleep_time = parse_args(sys.argv)
+        sleep_time = 1.0
+        time.sleep(sleep_time)
+        input_q = Queue.Queue(0)
+        
+        w = Worker()
+        threads = [ threading.Thread(target=w.run, args=()),
+                    threading.Thread(target=w.comm.read, args=()),
+                    threading.Thread(target=w.sender.run, args=()),
+                    threading.Thread(target=w.receiver.run, args=())
+                  ]
+
+        for th in threads:
+            th.start()
+
+        for th in threads:
+            th.join()
+        #Es("----- %s(%d) exitting-----\n"%(w.comm.name, w.comm.idx))
+        #os.kill(parent_pid, signal.SIGKILL)
+        
+    else:
+        assert child_pid > 0
+        set_sig_handlers()
+        os.waitpid(child_pid, 0)
+    
+
+if __name__ == "__main__":
+    main()
+

@@ -1,0 +1,142 @@
+2010-03-10 Taura
+	* ChangeLog : after release 3.07 started
+2010-03-10 Taura
+	* gxpmake/gxp_make_mapred.mk :
+	* gxpmake/ex_partitioner : new mapreduce implementation that does not 
+	create many intermediate files
+	* gxpmake/ex_exchanger : added for the new mapreduce implementation
+2010-05-02 Taura
+	* gxpbin/xmake : rewritten almost from scratch. major changes are
+	- it now uses sqlite3 for storing job records.
+	- still support other options with 
+	--work_db_class (sqlite3|sqlite3_mem|mem).
+	- removed many unused feaures (e.g., staging)
+	- html now shows rss and load average.
+	* gxpbin/xmake.2009 : old xmake
+2010-05-05 Taura
+	* gxpd.py (gxpd.cleanup_process) : fixed a memory leak bug in
+	which task.proc_by_rid does not shrink when a process dies.
+	besides obvious memory leak, this makes jobs in gxp make are
+	getting slower as it runs.
+2010-05-06 Taura
+	* gxpc.py (login_method_configs.__init__) : fixed torque_host bug.
+2010-05-12 Taura
+	* ioman.py (non_interruptible_select_by_poll) : added select
+	emulation by call contributed by Yoshikazu Kamoshida. Python's
+	select has a limitation that it only allows fd < 1024. poll-based
+	implementation does not have this restriction.
+2010-05-13 Taura
+	* xmake (work_db_naive_mem, work_db_mem) : original leaky work_db_mem
+	now renamed to work_db_naive_mem. work_db_smart_mem now became
+	work_db_mem, and became the default.
+2010-05-15 Taura
+	* gxpc.py (interpreter_opts) : added --target_prefix to global options.
+	this option used to be an explore-specific option, but it now became
+	both global and explore-specific. adding this to a global option allows
+	the user to specify the directory to which gxp3 is copied when gxpd
+	brings up first.
+	* gxpc.py (cmd_interpreter.really_create_daemon) : according to the
+	above item, if --target_prefix is passed as a global option, pass it 
+	to inst_local.py, so that gxp3 will be copied to the specified 
+	directory. by these additions: it is now possible to do something like
+	  gxpc --target_prefix /tmp/`whoami`/.gxp_tmp use sh .
+	  gxpc explore sh x 10
+2010-05-18 Taura
+	* gxpbin/mksh (translate_cwd): now mksh does not translate current 
+	directory. translation is now done by xmake, with respect to 
+	specified options.
+	* gxpbin/xmake (xmake_server.recv_work_aux): now it translates cwd
+	received from mksh.  it looks at --translate_dir options, plus
+	default $HOME -> ~
+2010-05-19 Taura
+	* ioman.py (child_process.__init__): captures time_start of a child
+	process
+	* ioman.py (rchannel_wait_child.process_event): captures time_end
+	of a child process
+	* gxpd.py (gxpd.cleanup_process): captures and sends time_start
+	and time_end of a process.
+	* gxpc.py (cmd_interpreter.handle_event_die): receives time_start
+	and time_end of a process from gxpd and sends it to notify channel.
+	* gxpm.py (event_die): extend fields to event_die to communicate
+	time_start/time_end information between gxpd and gxpc
+	* gxpbin/xmake (Run): extend fields with worker_time_start and
+	worker_time_end to receive when a process started/ended at workers.
+	many associated changes to display these information.
+	* gxpbin/xmake (Run.add_io): now it never misses IO from processes.
+2010-05-20 Taura
+	the following modifications together support --rlimit option
+	to e command
+	* gxpc.py (e_cmd_opts): added rlimit option
+	* gxpc.py (cmd_interpreter.do_e_like): pass rlimit option to 
+	spawn generic
+	* gxpm.py (action_createproc.__init__):
+	* gxpm.py (action_createpeer.__init__): take rlimits argument
+	* ioman.py (ioman.spawn_generic): take rlimits and pass it
+	to child_xxxx class constructor (below)
+	* ioman.py (child_process.run): call impose_rlimits
+	* ioman.py (child_process.impose_limits): impose rlimits passed
+	to spawn generic
+	* gxpd.py (child_task_process.__init__):
+	* gxpd.py (child_peer.__init__): take rlimits argument
+2010-05-21 Taura
+	xmake now tracke maxrss, ixrss, idrss, isrss, which are useless (all zeros).
+	they go into work.db just in case, but do not show up in html.
+	* xmake (Run): added maxrss, ixrss, idrss, and isrss fields and other
+	associated changes.
+2010-05-24 Taura
+	* xmake (xmake_server.abandon_runs_unfinished): fixed bugs calling finish
+	with the wrong number of arguments
+2010-05-25 Taura
+	* gxpc.py (e_cmd_opts.__init__):
+	* gxpc.py (cmd_interpreter.do_e_like):
+	* gxpc.py (cmd_interpreter.send_explore_msg): 
+	gxpc now support multiple --dir options, which set current dir to
+	the first one found on each worker.
+	* expectd.py (expectd.spawn): give right arg to spawn_generic
+	* gxpd.py (gxpd.action_create_proc_or_peer): merge --dir options and
+	directory in the session 
+	* gxpm.py (action_createproc):
+	* gxpm.py (action_createpeer):
+	* ioman.py (child_process.__init__):
+	cwd is now cwds, reflecting the fact that it is now a list of directories
+	* xmake (xmake_server):
+	now support --translate_dir src,dst,dst,... instead of 
+	--translate_dir src,dst.  src,dst1,dst2,dst3 is translated into
+	--dir dst1' --dir dst2' --dir dst3' to gxpc e command.
+2010-07-08 Taura
+	* gxpmake/gxp_make_pp_inc.mk:
+	* gxpmake/gxp_make_pp.mk:
+	* gxpmake/gxp_make_mapred_inc.mk:
+	* gxpmake/gxp_make_mapred.mk:
+	implemented a nicer interface to pp and mapred. 
+	they are now supposed to be written in regular Makefile that contains either
+	include $(GXP_MAKE_PP_INC),
+	include $(GXP_MAKE_MAPRED_INC),
+	or both (in fact they can be included arbitrary number of times).
+
+2010-09-08 Taura
+	* gxp_js.py:
+	* gxpbin/worker_prof:
+	* gxpbin/gxp_js_template.html;
+	added to implement a new job scheduling framework (gxpc js)
+	* gxpc.py:
+	* gxpd.py:
+	* gxpm.py:
+	added to implement a new job scheduling framework (gxpc js)
+2010-09-09 Taura
+	* gxp_js.py: use poll to avoid the restriction on the 
+	select'able file descriptors in python
+	* gxp_js.py: tracks rss and memory usage 
+	* gxp_js.py: support gxpc make2
+2010-09-13 Taura
+	* gxp_js.py: bug fix
+2011-06-28 Taura
+	* gxp_js.py: change notification format
+2011-09-30 Taura
+	* gxp_mapred.py: added
+	* gxpd.py: now export PYTHONPATH again
+2011-10-11 Taura
+	* gxp_js.py:mk_work_generator
+	fixed bug gxp make does not work with work_proc_sock2 etc
+	(thanks to Daisaku Yokoyama).
+
