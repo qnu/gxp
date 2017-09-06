@@ -162,10 +162,20 @@ class login_method_configs:
                              "-l select=%nodes:-1%:ncpus=%ncpus:-12%:mem=%mem:-52%gb "
                              "-l place=%place:-scatter%")
         self.fx10 = "qsub_wrap --sys pjsub %cmd%"
+        self.ofp = ("qsub_wrap --sys pjsub "
+                    "--timeout %timeout:-100% "
+                    "--script_dir %lustre_dir% "
+                    "%cmd% "
+                    "-- "
+                    "-L rscgrp=%rscgrp:-regular-cache% "
+                    "-L elapse=%elapse:-1:00:00% "
+                    "-L node=1 "
+                    "-g %group% ")
+        # reedbush-u system on utokyo
         self.reedbush = ("qsub_wrap --sys torque "
                          "--timeout %timeout:-100% "
                          "--qstat rbstat "
-                         "--script_dir /lustre/gc64/c64000 "
+                         "--script_dir %lustre_dir% "
                          "%cmd% "
                          "-- -q %q% "
                          "-l select=%nodes:-1%:ncpus=%ncpus:-36%:mpiprocs=%mpiprocs:-1%:ompthreads=%ompthreads:-1% "
