@@ -533,6 +533,7 @@ class qsub_wrap_server_cmd_opts(cmd_opts):
         self.qsub       = ("s", None)
         self.qstat      = ("s", None)
         self.qdel       = ("s", None)
+        self.script_dir = ("s", None)
         self.timeout    = ("f", 150.0)  # "" means infty
         self.bringup_timeout           = ("f", 2.0)
         self.display_progress_interval = ("f", 20.0)
@@ -757,6 +758,8 @@ Options:
       specifies the interval between displaying "waiting for connection" msg
   --taskset path_to_taskset (default: 0)
       bind the process to one proc, using taskset command on the node
+  --script_dir DIRNAME :
+      generate script/output file under DIRNAME
   --script FILENAME :
       generate script file submitted to qsub as FILENAME.
   --leave_output :
@@ -969,7 +972,9 @@ qsub_wrap hostname
         """
         u = os.getenv("USER")
         if u is None: u = ("%08d" % os.getuid())
-        c = os.getenv("HOME")
+        c = self.opt.script_dir
+        if c is None: c = os.getenv("QSUB_WRAP_SCRIPT_DIR")
+        if c is None: c = os.getenv("HOME")
         if c is None: c = os.getcwd()
         directory = os.path.join(c, (".qsub_wrap_scripts_%s" % u))
         return directory

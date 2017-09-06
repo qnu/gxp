@@ -162,6 +162,15 @@ class login_method_configs:
                              "-l select=%nodes:-1%:ncpus=%ncpus:-12%:mem=%mem:-52%gb "
                              "-l place=%place:-scatter%")
         self.fx10 = "qsub_wrap --sys pjsub %cmd%"
+        self.reedbush = ("qsub_wrap --sys torque "
+                         "--timeout %timeout:-100% "
+                         "--qstat rbstat "
+                         "--script_dir /lustre/gc64/c64000 "
+                         "%cmd% "
+                         "-- -q %q% "
+                         "-l select=%nodes:-1%:ncpus=%ncpus:-36%:mpiprocs=%mpiprocs:-1%:ompthreads=%ompthreads:-1% "
+                         "-W group_list=%group_list% "
+                         "-l walltime=%walltime:-1:00:00% ")
         # kyoto university MPP (system A)
         # the script needs to invoke python by aprun python ...
         # the address to connect back to is 10.7.x.x, among 
